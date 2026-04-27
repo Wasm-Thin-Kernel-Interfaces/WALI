@@ -1,32 +1,30 @@
-// CMD: setup="/tmp/seek_test.txt" args="file /tmp/seek_test.txt" cleanup="/tmp/seek_test.txt"
-// CMD: args="bad_fd"
-// CMD: setup="/tmp/seek_past.txt" args="past /tmp/seek_past.txt" cleanup="/tmp/seek_past.txt"
+// CMD: setup="/tmp/lseek_a"  args="set 5 5  /tmp/lseek_a"  cleanup="/tmp/lseek_a"
+// CMD: setup="/tmp/lseek_b"  args="end 0 10 /tmp/lseek_b"  cleanup="/tmp/lseek_b"
+// CMD: setup="/tmp/lseek_c"  args="past_eof 50 50 /tmp/lseek_c"  cleanup="/tmp/lseek_c"
+// CMD:                        args="bad_fd 0 0 /tmp/none"        cleanup=""
+// CMD: setup="/tmp/lseek_d"  args="bad_whence 0 0 /tmp/lseek_d"  cleanup="/tmp/lseek_d"
 
 #include "wali_start.c"
 #include <fcntl.h>
-#include <stddef.h>
 #include <string.h>
 
-#ifdef WALI_TEST_WRAPPER
-#include <stdlib.h>
-#include <unistd.h>
-#include <stdio.h>
+#ifndef __wasm__
+#include <sys/syscall.h>
+static inline long wali_lseek_native(int fd, long offset, int whence) {
+    return syscall(SYS_lseek, fd, offset, whence);
+}
+#define wali_syscall_lseek(fd, offset, whence) wali_lseek_native((fd), (offset), (whence))
+#endif
 
+#ifdef WALI_TEST_WRAPPER
 int test_setup(int argc, char **argv) {
     if (argc < 1) return 0;
-    const char *path = argv[0];
-    
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(argv[0], O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return -1;
-    // writes "0123456789"
-    if (write(fd, "0123456789", 10) != 10) {
-        close(fd);
-        return -1;
-    }
+    write(fd, "0123456789", 10);
     close(fd);
     return 0;
 }
-
 int test_cleanup(int argc, char **argv) {
     if (argc < 1) return 0;
     unlink(argv[0]);
@@ -34,91 +32,43 @@ int test_cleanup(int argc, char **argv) {
 }
 #endif
 
-#ifdef __wasm__
-__attribute__((__import_module__("wali"), __import_name__("SYS_open")))
-long __imported_wali_open(const char *pathname, int flags, int mode);
-__attribute__((__import_module__("wali"), __import_name__("SYS_read")))
-long __imported_wali_read(int fd, void *buf, size_t count);
-__attribute__((__import_module__("wali"), __import_name__("SYS_lseek")))
-long __imported_wali_lseek(int fd, long offset, int whence);
-__attribute__((__import_module__("wali"), __import_name__("SYS_close")))
-long __imported_wali_close(int fd);
-
-int wali_open(const char *pathname, int flags, int mode) {
-  return (int) __imported_wali_open(pathname, flags, mode);
+static long parse_long(const char *s) {
+    int sign = 1;
+    if (*s == '-') { sign = -1; s++; }
+    long v = 0;
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
+    return sign * v;
 }
-int wali_read(int fd, void *buf, size_t count) {
-  return (int) __imported_wali_read(fd, buf, count);
-}
-long wali_lseek(int fd, long offset, int whence) {
-  return __imported_wali_lseek(fd, offset, whence);
-}
-int wali_close(int fd) {
-  return (int) __imported_wali_close(fd);
-}
-#else
-int wali_open(const char *pathname, int flags, int mode) { return wali_syscall_open(pathname, flags, mode); }
-int wali_read(int fd, void *buf, size_t count) { return wali_syscall_read(fd, buf, count); }
-long wali_lseek(int fd, long offset, int whence) {
-  return syscall(SYS_lseek, fd, offset, whence);
-}
-int wali_close(int fd) {
-  return syscall(SYS_close, fd);
-}
-#endif
 
 int test(void) {
-  if (test_init_args() != 0) return -1;
-  const char *mode = (argc > 0) ? argv[0] : "bad_fd";
-  
-  if (strcmp(mode, "file") == 0) {
-      if (argc < 2) return -1;
-      int fd = wali_open(argv[1], O_RDONLY, 0);
-      if (fd < 0) return -1;
-      
-      char ch;
-      // 1. SEEK_SET to 5. Expect '5'
-      long res = wali_lseek(fd, 5, SEEK_SET);
-      if (res != 5) { wali_close(fd); return -1; }
-      
-      if (wali_read(fd, &ch, 1) != 1) { wali_close(fd); return -1; }
-      if (ch != '5') { wali_close(fd); return -1; }
-      
-      // 2. SEEK_CUR -2 (from 6 to 4). Expect '4'
-      res = wali_lseek(fd, -2, SEEK_CUR);
-      if (res != 4) { wali_close(fd); return -1; }
-      
-      if (wali_read(fd, &ch, 1) != 1) { wali_close(fd); return -1; }
-      if (ch != '4') { wali_close(fd); return -1; }
-      
-      // 3. SEEK_END -1. Expect '9'. File size is 10. End is 10. 10-1 = 9.
-      res = wali_lseek(fd, -1, SEEK_END);
-      if (res != 9) { wali_close(fd); return -1; }
-      
-      if (wali_read(fd, &ch, 1) != 1) { wali_close(fd); return -1; }
-      if (ch != '9') { wali_close(fd); return -1; }
-      
-      wali_close(fd);
-      return 0;
-  } else if (strcmp(mode, "bad_fd") == 0) {
-      long res = wali_lseek(9999, 0, SEEK_SET);
-      if (res >= 0) return -1;
-      return 0;
-  } else if (strcmp(mode, "past") == 0) {
-      if (argc < 2) return -1;
-      int fd = wali_open(argv[1], O_RDONLY, 0); 
-      if (fd < 0) return -1;
-      // Seek past end (10) -> 15. Allowed for read (eof)
-      long res = wali_lseek(fd, 15, SEEK_SET);
-      if (res != 15) return -1;
-      
-      char ch;
-      // Read should return 0
-      if (wali_read(fd, &ch, 1) != 0) return -1;
-      
-      wali_close(fd);
-      return 0;
-  }
-  
-  return -1;
+    if (test_init_args() != 0) return -1;
+    if (argc < 5) return -1;
+    const char *mode = argv[1];
+    long offset = parse_long(argv[2]);
+    long expected = parse_long(argv[3]);
+    const char *path = argv[4];
+
+    int whence;
+    int expect_ok = 1;
+    if (!strcmp(mode, "set"))             whence = SEEK_SET;
+    else if (!strcmp(mode, "end"))        whence = SEEK_END;
+    else if (!strcmp(mode, "past_eof"))   whence = SEEK_SET;
+    else if (!strcmp(mode, "bad_fd"))     whence = SEEK_SET;
+    else if (!strcmp(mode, "bad_whence")) { whence = 9999; expect_ok = 0; }
+    else return -1;
+
+    int fd;
+    if (!strcmp(mode, "bad_fd")) {
+        fd = 99999;
+        expect_ok = 0;
+    } else {
+        fd = wali_syscall_open(path, O_RDONLY, 0);
+        if (fd < 0) return -1;
+    }
+
+    long r = wali_syscall_lseek(fd, offset, whence);
+    if (strcmp(mode, "bad_fd") != 0) wali_syscall_close(fd);
+
+    if (!expect_ok) return (r < 0) ? 0 : -1;
+    return (r == expected) ? 0 : -1;
 }

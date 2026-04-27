@@ -6,9 +6,11 @@ UNAME_M := $(shell uname -m)
 ifeq ($(UNAME_S),Linux)
 	MEMGB := $(shell free -g | sed -n '2p' | awk '{print $$2}')
 	COMPILE_PARALLEL := $(shell nproc --all)
+	GTAR := tar
 else ifeq ($(UNAME_S),Darwin)
 	MEMGB := $(shell echo "scale=0; $$(sysctl -n hw.memsize) / 1073741824" | bc)
 	COMPILE_PARALLEL := $(shell sysctl -n hw.logicalcpu)
+	GTAR := gtar
 else
 	$(error BUILD ERROR: Unknown OS '$(UNAME_S)' (Supported platforms: Linux, Darwin))
 endif
@@ -18,6 +20,8 @@ LINK_PARALLEL := $(shell echo $$(($(MEMGB) < 16 ? 1 : $(MEMGB) / 16)))
 MAP_Linux := Linux
 MAP_Darwin := macOS
 MAP_x86_64 := X64
+# uname -m gives "arm64" on macOS but "aarch64" on Linux; both map to ARM64.
+MAP_arm64 := ARM64
 MAP_aarch64 := ARM64
 
 LLVM_RELEASE_PLATFORM := $(MAP_$(UNAME_S))-$(MAP_$(UNAME_M))
@@ -184,7 +188,7 @@ llvm-base: | build_dir
 		if [ "$(SLIM)" = "1" ]; then \
 			echo "Downloading $(LLVM_RELEASE_NAME).tar.xz (slim)..." && \
 			curl -L $(LLVM_RELEASE_URL) \
-				| tar -xJ -C $(WALI_LLVM_DIR) --strip-components=1 --wildcards $(LLVM_SLIM_PATHS); \
+				| $(GTAR) -xJ -C $(WALI_LLVM_DIR) --strip-components=1 --wildcards $(LLVM_SLIM_PATHS); \
 		else \
 			echo "Downloading $(LLVM_RELEASE_NAME).tar.xz..." && \
 			curl -L -o $(WALI_BUILD_DIR)/$(LLVM_RELEASE_NAME).tar.xz $(LLVM_RELEASE_URL) && \

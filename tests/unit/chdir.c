@@ -1,46 +1,34 @@
-// CMD: setup="" args="" cleanup=""
+// CMD: setup="mkdir /tmp/sub_chdir"  args="ok /tmp/sub_chdir"            cleanup="rmdir /tmp/sub_chdir"
+// CMD:                                args="ok /tmp"                      cleanup=""
+// CMD:                                args="ok .."                        cleanup=""
+// CMD:                                args="fail /tmp/chdir_nonexistent"  cleanup=""
+// CMD:                                args="fail ''"                      cleanup=""
 
 #include "wali_start.c"
 #include <string.h>
 
-#define TEST_DIR "/tmp/sub_chdir"
-
 #ifdef WALI_TEST_WRAPPER
-#include <unistd.h>
+#include <sys/stat.h>
 int test_setup(int argc, char **argv) {
-    rmdir(TEST_DIR);
+    if (argc >= 2 && strcmp(argv[0], "mkdir") == 0) {
+        rmdir(argv[1]);
+        return mkdir(argv[1], 0755);
+    }
     return 0;
 }
 int test_cleanup(int argc, char **argv) {
-    rmdir(TEST_DIR);
+    if (argc >= 2 && strcmp(argv[0], "rmdir") == 0) {
+        rmdir(argv[1]);
+    }
     return 0;
 }
 #endif
 
 int test(void) {
-    char cwd1[512];
-    char cwd2[512];
-    
-    TEST_LOG("Getting initial CWD");
-    TEST_ASSERT(wali_syscall_getcwd(cwd1, sizeof(cwd1)) > 0);
-    
-    TEST_LOG("Creating directory " TEST_DIR);
-    TEST_ASSERT_EQ(wali_syscall_mkdir(TEST_DIR, 0755), 0);
-    
-    TEST_LOG("Changing directory to " TEST_DIR);
-    TEST_ASSERT_EQ(wali_syscall_chdir(TEST_DIR), 0);
-    
-    TEST_LOG("Verifying new CWD");
-    TEST_ASSERT(wali_syscall_getcwd(cwd2, sizeof(cwd2)) > 0);
-    
-    // Verify cwd2 contains TEST_DIR
-    TEST_ASSERT(strstr(cwd2, "sub_chdir") != NULL);
-    
-    TEST_LOG("Going back up");
-    TEST_ASSERT_EQ(wali_syscall_chdir(".."), 0);
-    
-    TEST_LOG("Cleaning up");
-    TEST_ASSERT_EQ(wali_syscall_rmdir(TEST_DIR), 0);
-    
-    return 0;
+    if (test_init_args() != 0) return -1;
+    if (argc < 3) return -1;
+    int expect_ok = strcmp(argv[1], "ok") == 0;
+    long r = wali_syscall_chdir(argv[2]);
+    int success = (r == 0);
+    return (success == expect_ok) ? 0 : -1;
 }

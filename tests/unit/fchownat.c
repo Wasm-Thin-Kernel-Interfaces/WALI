@@ -1,58 +1,57 @@
-// CMD: setup="/tmp/fchownat_test" args="/tmp/fchownat_test" cleanup="/tmp/fchownat_test"
+// CMD: setup="/tmp/fchownat_a"  args="ok       /tmp/fchownat_a   -1 -1"  cleanup="/tmp/fchownat_a"
+// CMD: setup="/tmp/fchownat_b"  args="ok       /tmp/fchownat_b   -1  0"  cleanup="/tmp/fchownat_b"
+// CMD: setup="/tmp/fchownat_c"  args="ok       /tmp/fchownat_c    0 -1"  cleanup="/tmp/fchownat_c"
+// CMD:                           args="missing  /tmp/fchownat_miss -1 -1" cleanup=""
 
 #include "wali_start.c"
-#include <unistd.h>
 #include <fcntl.h>
-#include <sys/stat.h>
+#include <string.h>
+
+#ifndef AT_FDCWD
+#define AT_FDCWD -100
+#endif
+
+#ifdef __wasm__
+WALI_IMPORT("SYS_fchownat") long wali_syscall_fchownat(int dirfd, const char *pathname, int owner, int group, int flags);
+int wali_fchownat(int dirfd, const char *pathname, int owner, int group, int flags) {
+    return (int)wali_syscall_fchownat(dirfd, pathname, owner, group, flags);
+}
+#else
+#include <sys/syscall.h>
+int wali_fchownat(int dirfd, const char *pathname, int owner, int group, int flags) {
+    return syscall(SYS_fchownat, dirfd, pathname, owner, group, flags);
+}
+#endif
 
 #ifdef WALI_TEST_WRAPPER
-#include <stdlib.h>
 int test_setup(int argc, char **argv) {
-    if (argc < 1) return -1;
+    if (argc < 1) return 0;
     int fd = open(argv[0], O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd >= 0) close(fd);
     return 0;
 }
 int test_cleanup(int argc, char **argv) {
-    if (argc < 1) return -1;
+    if (argc < 1) return 0;
     unlink(argv[0]);
     return 0;
 }
 #endif
 
-#ifdef __wasm__
-__attribute__((__import_module__("wali"), __import_name__("SYS_fchownat")))
-long __imported_wali_fchownat(int dirfd, const char *pathname, uid_t owner, gid_t group, int flags);
-__attribute__((__import_module__("wali"), __import_name__("SYS_getuid")))
-long __imported_wali_getuid(void);
-__attribute__((__import_module__("wali"), __import_name__("SYS_getgid")))
-long __imported_wali_getgid(void);
-
-int wali_fchownat(int dirfd, const char *pathname, uid_t owner, gid_t group, int flags) { 
-    return (int)__imported_wali_fchownat(dirfd, pathname, owner, group, flags); 
+static int parse_int(const char *s) {
+    int sign = 1;
+    if (*s == '-') { sign = -1; s++; }
+    int v = 0;
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
+    return sign * v;
 }
-uid_t wali_getuid(void) { return (uid_t)__imported_wali_getuid(); }
-gid_t wali_getgid(void) { return (gid_t)__imported_wali_getgid(); }
-
-#else
-#include <sys/syscall.h>
-int wali_fchownat(int dirfd, const char *pathname, uid_t owner, gid_t group, int flags) { 
-    return syscall(SYS_fchownat, dirfd, pathname, owner, group, flags); 
-}
-uid_t wali_getuid(void) { return syscall(SYS_getuid); }
-gid_t wali_getgid(void) { return syscall(SYS_getgid); }
-#endif
 
 int test(void) {
     if (test_init_args() != 0) return -1;
-    const char *path = argv[0];
-    
-    uid_t uid = wali_getuid();
-    gid_t gid = wali_getgid();
-    
-    // Set to current owner/group using AT_FDCWD
-    int ret = wali_fchownat(AT_FDCWD, path, uid, gid, 0);
-    if (ret != 0) return -1;
-    
-    return 0;
+    if (argc < 5) return -1;
+    const char *path = argv[2];
+    int uid = parse_int(argv[3]);
+    int gid = parse_int(argv[4]);
+
+    long r = wali_fchownat(AT_FDCWD, path, uid, gid, 0);
+    return (r == 0) ? 0 : 1;
 }

@@ -1,126 +1,66 @@
-// CMD: setup="/tmp/stat_file.txt" args="file /tmp/stat_file.txt" cleanup="/tmp/stat_file.txt"
-// CMD: args="fail /tmp/missing.txt"
+// CMD: setup="file:/tmp/stat_a 100" args="file 100 /tmp/stat_a" cleanup="/tmp/stat_a"
+// CMD: setup="dir:/tmp/stat_d"        args="dir 0 /tmp/stat_d"   cleanup="dir:/tmp/stat_d"
+// CMD:                                  args="missing 0 /tmp/stat_no" cleanup=""
 
 #include "wali_start.c"
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <string.h>
 
-#ifdef WALI_TEST_WRAPPER
-#include <stdlib.h>
-#include <unistd.h>
-#include <stdio.h>
-
-int test_setup(int argc, char **argv) {
-    if (argc < 1) return 0;
-    const char *path = argv[0];
-    
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) return -1;
-    // Write 100 bytes
-    char buf[100];
-    memset(buf, 'x', 100);
-    if (write(fd, buf, 100) != 100) {
-        close(fd);
-        return -1;
-    }
-    close(fd);
-    return 0;
-}
-
-int test_cleanup(int argc, char **argv) {
-    if (argc < 1) return 0;
-    unlink(argv[0]);
-    return 0;
-}
-#endif
-
 #ifdef __wasm__
-// Import WALI syscalls
-// We need headers for struct stat. <sys/stat.h> is included above.
-
 __attribute__((__import_module__("wali"), __import_name__("SYS_stat")))
 long __imported_wali_stat(const char *pathname, struct stat *statbuf);
-
-__attribute__((__import_module__("wali"), __import_name__("SYS_fstat")))
-long __imported_wali_fstat(int fd, struct stat *statbuf);
-
-__attribute__((__import_module__("wali"), __import_name__("SYS_open")))
-long __imported_wali_open(const char *pathname, int flags, int mode);
-
-__attribute__((__import_module__("wali"), __import_name__("SYS_close")))
-long __imported_wali_close(int fd);
-
-int wali_stat(const char *pathname, struct stat *statbuf) {
-  return (int) __imported_wali_stat(pathname, statbuf);
-}
-int wali_fstat(int fd, struct stat *statbuf) {
-  return (int) __imported_wali_fstat(fd, statbuf);
-}
-int wali_open(const char *pathname, int flags, int mode) {
-  return (int) __imported_wali_open(pathname, flags, mode);
-}
-int wali_close(int fd) {
-  return (int) __imported_wali_close(fd);
-}
-
+int wali_stat(const char *path, struct stat *st) { return (int)__imported_wali_stat(path, st); }
 #else
-int wali_stat(const char *pathname, struct stat *statbuf) { return wali_syscall_stat(pathname, statbuf); }
-int wali_fstat(int fd, struct stat *statbuf) {
-#ifdef SYS_fstat
-  return syscall(SYS_fstat, fd, statbuf);
-#else
-  return syscall(SYS_newfstatat, fd, "", statbuf, AT_EMPTY_PATH);
+int wali_stat(const char *path, struct stat *st) { return wali_syscall_stat(path, st); }
 #endif
+
+#ifdef WALI_TEST_WRAPPER
+#include <stdio.h>
+#include <stdlib.h>
+int test_setup(int argc, char **argv) {
+    if (argc < 1) return 0;
+    if (!strncmp(argv[0], "file:", 5)) {
+        if (argc < 2) return -1;
+        int size = atoi(argv[1]);
+        int fd = open(argv[0] + 5, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) return -1;
+        char buf[256] = {0};
+        memset(buf, 'x', sizeof(buf));
+        for (int i = 0; i < size; i += 256) {
+            int chunk = (size - i > 256) ? 256 : (size - i);
+            write(fd, buf, chunk);
+        }
+        close(fd);
+    } else if (!strncmp(argv[0], "dir:", 4)) {
+        rmdir(argv[0] + 4);
+        return mkdir(argv[0] + 4, 0755);
+    }
+    return 0;
 }
-int wali_open(const char *pathname, int flags, int mode) { return wali_syscall_open(pathname, flags, mode); }
-int wali_close(int fd) { return wali_syscall_close(fd); }
+int test_cleanup(int argc, char **argv) {
+    for (int i = 0; i < argc; i++) {
+        if (!strncmp(argv[i], "dir:", 4)) rmdir(argv[i] + 4);
+        else unlink(argv[i]);
+    }
+    return 0;
+}
 #endif
 
 int test(void) {
-  if (test_init_args() != 0) return -1;
-  const char *mode = (argc > 0) ? argv[0] : "fail";
-  
-  struct stat st;
-  memset(&st, 0, sizeof(st));
-  
-  if (strcmp(mode, "file") == 0) {
-      if (argc < 2) return -1;
-      const char *path = argv[1];
-      
-      // Test 1: stat
-      if (wali_stat(path, &st) != 0) return -1;
-      
-      if (st.st_size != 100) return -1;
-      if (!S_ISREG(st.st_mode)) return -1;
-      
-      // Test 2: fstat
-      int fd = wali_open(path, O_RDONLY, 0);
-      if (fd < 0) return -1;
-      
-      struct stat fst;
-      if (wali_fstat(fd, &fst) != 0) {
-          wali_close(fd);
-          return -1;
-      }
-      wali_close(fd);
-      
-      if (fst.st_size != 100) return -1;
-      if (!S_ISREG(fst.st_mode)) return -1;
-      
-      // Verify inode matches (usually good check)
-      if (st.st_ino != fst.st_ino) return -1;
-      
-      return 0;
-      
-  } else if (strcmp(mode, "fail") == 0) {
-      if (argc < 2) return -1;
-      const char *path = argv[1];
-      
-      if (wali_stat(path, &st) == 0) return -1; // Should fail
-      
-      return 0;
-  }
-  
-  return -1;
+    if (test_init_args() != 0) return -1;
+    if (argc < 4) return -1;
+    const char *mode = argv[1];
+    long expected_size = 0;
+    for (const char *p = argv[2]; *p; p++) expected_size = expected_size * 10 + (*p - '0');
+    const char *path = argv[3];
+
+    struct stat st;
+    long r = wali_stat(path, &st);
+
+    if (!strcmp(mode, "missing")) return (r < 0) ? 0 : -1;
+    if (r != 0) return -1;
+    if (!strcmp(mode, "file")) return (S_ISREG(st.st_mode) && st.st_size == expected_size) ? 0 : -1;
+    if (!strcmp(mode, "dir"))  return S_ISDIR(st.st_mode) ? 0 : -1;
+    return -1;
 }

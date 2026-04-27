@@ -1,62 +1,70 @@
-// CMD: setup="" args="" cleanup=""
+// CMD: setup="create 0644 /tmp/access_fok.txt"      args="F_OK 1 /tmp/access_fok.txt"      cleanup="/tmp/access_fok.txt"
+// CMD:                                                args="F_OK 0 /tmp/access_missing.txt"  cleanup=""
+// CMD: setup="create 0444 /tmp/access_rok.txt"      args="R_OK 1 /tmp/access_rok.txt"      cleanup="/tmp/access_rok.txt"
+// CMD: setup="create 0755 /tmp/access_xok.txt"      args="X_OK 1 /tmp/access_xok.txt"      cleanup="/tmp/access_xok.txt"
+// CMD: setup="create 0644 /tmp/access_xfail.txt"    args="X_OK 0 /tmp/access_xfail.txt"    cleanup="/tmp/access_xfail.txt"
+// CMD: setup="create 0666 /tmp/access_rwok.txt"     args="RW_OK 1 /tmp/access_rwok.txt"    cleanup="/tmp/access_rwok.txt"
+// CMD: setup="dangling_symlink /tmp/access_dangle"  args="F_OK 0 /tmp/access_dangle"       cleanup="/tmp/access_dangle"
 
 #include "wali_start.c"
 
 #include <fcntl.h>
-
-#define FILE_OK "/tmp/access_ok.txt"
-#define FILE_RW "/tmp/access_rw.txt"
-#define FILE_X  "/tmp/access_x.txt"
-#define FILE_RO "/tmp/access_ro.txt"
-#define FILE_MISSING "/tmp/access_missing.txt"
+#include <string.h>
 
 #ifdef WALI_TEST_WRAPPER
 #include <sys/stat.h>
-int test_setup(int argc, char **argv) {
-    int fd;
-    // Cleanup first
-    unlink(FILE_OK); unlink(FILE_RW); unlink(FILE_X); unlink(FILE_RO);
+#include <stdlib.h>
+#include <stdio.h>
 
-    // Create files
-    fd = open(FILE_OK, O_WRONLY | O_CREAT | O_TRUNC, 0644); close(fd);
-    fd = open(FILE_RW, O_WRONLY | O_CREAT | O_TRUNC, 0666); close(fd); // rw-rw-rw-
-    fd = open(FILE_X,  O_WRONLY | O_CREAT | O_TRUNC, 0755); close(fd); // rwxr-xr-x
-    fd = open(FILE_RO, O_WRONLY | O_CREAT | O_TRUNC, 0444); close(fd); // r--r--r--
-    
+int test_setup(int argc, char **argv) {
+    if (argc < 1) return 0;
+    const char *op = argv[0];
+
+    if (strcmp(op, "create") == 0) {
+        if (argc < 3) return -1;
+        long mode = strtol(argv[1], NULL, 8);
+        const char *path = argv[2];
+        unlink(path);
+        int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, (mode_t)mode);
+        if (fd < 0) return -1;
+        close(fd);
+        // open() honors umask; force the exact mode we asked for.
+        if (chmod(path, (mode_t)mode) != 0) return -1;
+    } else if (strcmp(op, "dangling_symlink") == 0) {
+        if (argc < 2) return -1;
+        const char *path = argv[1];
+        unlink(path);
+        if (symlink("/tmp/access_definitely_missing_target", path) != 0) return -1;
+    }
     return 0;
 }
+
 int test_cleanup(int argc, char **argv) {
-    unlink(FILE_OK);
-    unlink(FILE_RW);
-    unlink(FILE_X);
-    unlink(FILE_RO);
+    if (argc < 1) return 0;
+    unlink(argv[0]);
     return 0;
 }
 #endif
 
+static int parse_mode(const char *s) {
+    if (!strcmp(s, "F_OK")) return F_OK;
+    if (!strcmp(s, "R_OK")) return R_OK;
+    if (!strcmp(s, "W_OK")) return W_OK;
+    if (!strcmp(s, "X_OK")) return X_OK;
+    if (!strcmp(s, "RW_OK")) return R_OK | W_OK;
+    return -1;
+}
+
 int test(void) {
-    // 1. Exist
-    TEST_ASSERT_EQ(wali_syscall_access(FILE_OK, F_OK), 0);
-    TEST_ASSERT_EQ(wali_syscall_access(FILE_OK, R_OK), 0);
+    if (test_init_args() != 0) return -1;
+    if (argc < 4) return -1;
 
-    // 2. Fail (Missing)
-    TEST_ASSERT(wali_syscall_access(FILE_MISSING, F_OK) < 0);
+    int mode = parse_mode(argv[1]);
+    if (mode < 0) return -1;
+    int expect_ok = (argv[2][0] == '1');
+    const char *path = argv[3];
 
-    // 3. Read/Write
-    TEST_ASSERT_EQ(wali_syscall_access(FILE_RW, R_OK), 0);
-    TEST_ASSERT_EQ(wali_syscall_access(FILE_RW, W_OK), 0);
-
-    // 4. Exec
-    TEST_ASSERT_EQ(wali_syscall_access(FILE_X, X_OK), 0);
-
-    // 5. Read Only (No Write)
-    // Note: If running as root (some CI envs), W_OK might succeed even for RO files.
-    // We assume non-root for strict check, or just check existence.
-    // For now, let's keep the logic strict and see if it passes.
-    if (getuid() != 0) {
-        TEST_ASSERT(wali_syscall_access(FILE_RO, W_OK) < 0);
-    }
-    TEST_ASSERT_EQ(wali_syscall_access(FILE_RO, R_OK), 0);
-    
-    return 0;
+    long r = wali_syscall_access(path, mode);
+    int success = (r == 0);
+    return (success == expect_ok) ? 0 : -1;
 }

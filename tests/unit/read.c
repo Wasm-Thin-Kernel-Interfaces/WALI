@@ -1,30 +1,21 @@
-// CMD: setup="/tmp/read_ok.txt" args="file /tmp/read_ok.txt" cleanup="/tmp/read_ok.txt"
-// CMD: args="bad_fd"
+// CMD: setup="/tmp/read_a"  args="ok       /tmp/read_a"  cleanup="/tmp/read_a"
+// CMD: setup="/tmp/read_b"  args="zero     /tmp/read_b"  cleanup="/tmp/read_b"
+// CMD: setup="/tmp/read_c"  args="wronly   /tmp/read_c"  cleanup="/tmp/read_c"
+// CMD:                       args="bad_fd   /tmp/none"    cleanup=""
 
 #include "wali_start.c"
 #include <fcntl.h>
-#include <stddef.h>
 #include <string.h>
 
 #ifdef WALI_TEST_WRAPPER
-#include <stdlib.h>
-#include <unistd.h>
-#include <stdio.h>
-
 int test_setup(int argc, char **argv) {
     if (argc < 1) return 0;
-    const char *path = argv[0];
-    
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(argv[0], O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return -1;
-    if (write(fd, "WALI_READ_TEST", 14) != 14) {
-        close(fd);
-        return -1;
-    }
+    write(fd, "WALI_READ_TEST", 14);
     close(fd);
     return 0;
 }
-
 int test_cleanup(int argc, char **argv) {
     if (argc < 1) return 0;
     unlink(argv[0]);
@@ -32,55 +23,36 @@ int test_cleanup(int argc, char **argv) {
 }
 #endif
 
-#ifdef __wasm__
-__attribute__((__import_module__("wali"), __import_name__("SYS_open")))
-long __imported_wali_open(const char *pathname, int flags, int mode);
-__attribute__((__import_module__("wali"), __import_name__("SYS_read")))
-long __imported_wali_read(int fd, void *buf, size_t count);
-__attribute__((__import_module__("wali"), __import_name__("SYS_close")))
-long __imported_wali_close(int fd);
-
-int wali_open(const char *pathname, int flags, int mode) {
-  return (int) __imported_wali_open(pathname, flags, mode);
-}
-int wali_read(int fd, void *buf, size_t count) {
-  return (int) __imported_wali_read(fd, buf, count);
-}
-int wali_close(int fd) {
-  return (int) __imported_wali_close(fd);
-}
-#else
-int wali_open(const char *pathname, int flags, int mode) { return wali_syscall_open(pathname, flags, mode); }
-int wali_read(int fd, void *buf, size_t count) { return wali_syscall_read(fd, buf, count); }
-int wali_close(int fd) { return wali_syscall_close(fd); }
-#endif
-
 int test(void) {
-  if (test_init_args() != 0) return -1;
-  const char *mode = (argc > 0) ? argv[0] : "bad_fd";
-  
-  if (strcmp(mode, "file") == 0) {
-      if (argc < 2) return -1;
-      int fd = wali_open(argv[1], O_RDONLY, 0);
-      if (fd < 0) return -1;
-      
-      char buf[32];
-      memset(buf, 0, sizeof(buf));
-      int bytes = wali_read(fd, buf, 32);
-      wali_close(fd);
-      
-      if (bytes != 14) return -1;
-      
-      // Check content logic
-      if (strcmp(buf, "WALI_READ_TEST") != 0) return -1;
-      
-      return 0;
-  } else if (strcmp(mode, "bad_fd") == 0) {
-      char buf[10];
-      int res = wali_read(9999, buf, 10);
-      if (res >= 0) return -1; // Should fail
-      return 0;
-  }
-  
-  return -1;
+    if (test_init_args() != 0) return -1;
+    if (argc < 3) return -1;
+    const char *mode = argv[1];
+    const char *path = argv[2];
+
+    if (!strcmp(mode, "bad_fd")) {
+        char buf[8];
+        long r = wali_syscall_read(99999, buf, 8);
+        return (r < 0) ? 0 : -1;
+    }
+
+    int flags = !strcmp(mode, "wronly") ? O_WRONLY : O_RDONLY;
+    int fd = wali_syscall_open(path, flags, 0);
+    if (fd < 0) return -1;
+
+    char buf[32] = {0};
+    long r;
+    int ret = -1;
+    if (!strcmp(mode, "ok")) {
+        r = wali_syscall_read(fd, buf, sizeof(buf));
+        ret = (r == 14 && memcmp(buf, "WALI_READ_TEST", 14) == 0) ? 0 : -1;
+    } else if (!strcmp(mode, "zero")) {
+        r = wali_syscall_read(fd, buf, 0);
+        ret = (r == 0) ? 0 : -1;
+    } else if (!strcmp(mode, "wronly")) {
+        // Read on a write-only fd → EBADF.
+        r = wali_syscall_read(fd, buf, sizeof(buf));
+        ret = (r < 0) ? 0 : -1;
+    }
+    wali_syscall_close(fd);
+    return ret;
 }

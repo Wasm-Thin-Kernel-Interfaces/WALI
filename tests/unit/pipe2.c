@@ -1,68 +1,58 @@
-// CMD: args="basic"
+// CMD: args="both"
+// CMD: args="cloexec_only"
+// CMD: args="nonblock_only"
+// CMD: args="none"
+// CMD: args="bad_flags"
 
 #include "wali_start.c"
-#include <unistd.h>
 #include <fcntl.h>
 #include <string.h>
+
+#ifdef __wasm__
+__attribute__((__import_module__("wali"), __import_name__("SYS_pipe2")))
+long __imported_wali_pipe2(int *pipefd, int flags);
+int wali_pipe2(int *pipefd, int flags) { return (int)__imported_wali_pipe2(pipefd, flags); }
+#else
+#include <sys/syscall.h>
+int wali_pipe2(int *pipefd, int flags) { return syscall(SYS_pipe2, pipefd, flags); }
+#endif
 
 #ifdef WALI_TEST_WRAPPER
 int test_setup(int argc, char **argv) { return 0; }
 int test_cleanup(int argc, char **argv) { return 0; }
 #endif
 
-#ifdef __wasm__
-__attribute__((__import_module__("wali"), __import_name__("SYS_pipe2")))
-long __imported_wali_pipe2(int *pipefd, int flags);
-__attribute__((__import_module__("wali"), __import_name__("SYS_fcntl")))
-long __imported_wali_fcntl(int fd, int cmd, unsigned long arg);
-__attribute__((__import_module__("wali"), __import_name__("SYS_close")))
-long __imported_wali_close(int fd);
-
-int wali_pipe2(int *pipefd, int flags) { return (int)__imported_wali_pipe2(pipefd, flags); }
-int wali_fcntl(int fd, int cmd, unsigned long arg) { return (int)__imported_wali_fcntl(fd, cmd, arg); }
-int wali_close(int fd) { return (int)__imported_wali_close(fd); }
-#else
-#include <sys/syscall.h>
-int wali_pipe2(int *pipefd, int flags) { return syscall(SYS_pipe2, pipefd, flags); }
-int wali_fcntl(int fd, int cmd, unsigned long arg) { return syscall(SYS_fcntl, fd, cmd, arg); }
-int wali_close(int fd) { return syscall(SYS_close, fd); }
-#endif
-
-#ifndef O_CLOEXEC
-#define O_CLOEXEC 02000000
-#endif
-#ifndef O_NONBLOCK
-#define O_NONBLOCK 04000
-#endif
-#ifndef FD_CLOEXEC
-#define FD_CLOEXEC 1
-#endif
-#ifndef F_GETFL
-#define F_GETFL 3
-#endif
-#ifndef F_GETFD
-#define F_GETFD 1
-#endif
-
 int test(void) {
     if (test_init_args() != 0) return -1;
+    const char *mode = (argc > 1) ? argv[1] : "both";
+
+    int flags = 0;
+    int expect_cloexec = 0, expect_nonblock = 0;
+    int expect_ok = 1;
+    if (!strcmp(mode, "both"))           { flags = O_CLOEXEC | O_NONBLOCK; expect_cloexec = 1; expect_nonblock = 1; }
+    else if (!strcmp(mode, "cloexec_only"))  { flags = O_CLOEXEC; expect_cloexec = 1; }
+    else if (!strcmp(mode, "nonblock_only")) { flags = O_NONBLOCK; expect_nonblock = 1; }
+    else if (!strcmp(mode, "none"))      { flags = 0; }
+    else if (!strcmp(mode, "bad_flags")) { flags = 0xDEAD0000; expect_ok = 0; }
+    else return -1;
 
     int pipefd[2];
-    int res = wali_pipe2(pipefd, O_CLOEXEC | O_NONBLOCK);
-    if (res != 0) return -1;
+    long r = wali_pipe2(pipefd, flags);
+    int success = (r == 0);
+    if (success != expect_ok) return -1;
+    if (!success) return 0;
 
-    // Check O_CLOEXEC on read end
-    int flags = wali_fcntl(pipefd[0], F_GETFD, 0);
-    if (!(flags & FD_CLOEXEC)) return -1;
+    int ret = 0;
+    long fd_flags = wali_syscall_fcntl(pipefd[0], F_GETFD, 0);
+    long fl_flags = wali_syscall_fcntl(pipefd[0], F_GETFL, 0);
+    if (fd_flags < 0 || fl_flags < 0) ret = -1;
+    else {
+        int has_cloexec = (fd_flags & FD_CLOEXEC) ? 1 : 0;
+        int has_nonblock = (fl_flags & O_NONBLOCK) ? 1 : 0;
+        if (has_cloexec != expect_cloexec || has_nonblock != expect_nonblock) ret = -1;
+    }
 
-    // Check O_NONBLOCK on read end
-    flags = wali_fcntl(pipefd[0], F_GETFL, 0);
-    if (!(flags & O_NONBLOCK)) return -1;
-    
-    // Check write end too if we want, typically they share or both set
-    
-    wali_close(pipefd[0]);
-    wali_close(pipefd[1]);
-
-    return 0;
+    wali_syscall_close(pipefd[0]);
+    wali_syscall_close(pipefd[1]);
+    return ret;
 }

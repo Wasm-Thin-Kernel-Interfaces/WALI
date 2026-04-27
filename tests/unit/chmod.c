@@ -1,44 +1,54 @@
-// CMD: setup="" args="" cleanup=""
+// CMD: setup="0644 /tmp/chmod_a.txt"  args="ok 0777 /tmp/chmod_a.txt"        cleanup="0777 /tmp/chmod_a.txt"
+// CMD: setup="0644 /tmp/chmod_b.txt"  args="ok 0600 /tmp/chmod_b.txt"        cleanup="0600 /tmp/chmod_b.txt"
+// CMD: setup="0644 /tmp/chmod_c.txt"  args="ok 0000 /tmp/chmod_c.txt"        cleanup="0000 /tmp/chmod_c.txt"
+// CMD: setup="0644 /tmp/chmod_d.txt"  args="ok 04755 /tmp/chmod_d.txt"       cleanup="04755 /tmp/chmod_d.txt"
+// CMD: setup="0644 /tmp/chmod_e.txt"  args="ok 02755 /tmp/chmod_e.txt"       cleanup="02755 /tmp/chmod_e.txt"
+// CMD:                                 args="fail 0777 /tmp/chmod_missing"   cleanup=""
 
 #include "wali_start.c"
 #include <sys/stat.h>
-
-#define TEST_FILE "/tmp/chmod_test.txt"
+#include <fcntl.h>
+#include <string.h>
 
 #ifdef WALI_TEST_WRAPPER
-#include <unistd.h>
-#include <fcntl.h>
+#include <stdlib.h>
 int test_setup(int argc, char **argv) {
-    int fd = open(TEST_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd >= 0) close(fd);
-    return 0;
+    if (argc < 2) return 0;
+    long mode = strtol(argv[0], NULL, 8);
+    const char *path = argv[1];
+    unlink(path);
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, (mode_t)mode);
+    if (fd < 0) return -1;
+    close(fd);
+    // open() honors umask; force the requested mode explicitly.
+    return chmod(path, (mode_t)mode);
 }
 int test_cleanup(int argc, char **argv) {
-    unlink(TEST_FILE);
-    return 0;
+    if (argc == 0) return 0;
+    if (argc == 1) {
+        unlink(argv[0]);
+        return 0;
+    }
+    long expected = strtol(argv[0], NULL, 8);
+    const char *path = argv[1];
+    struct stat st;
+    int ok = (stat(path, &st) == 0) && ((st.st_mode & 07777) == (mode_t)expected);
+    unlink(path);
+    return ok ? 0 : -1;
 }
 #endif
 
 int test(void) {
-    struct stat st;
-    
-    TEST_LOG("Testing chmod " TEST_FILE " to 0777");
-    TEST_ASSERT_EQ(wali_syscall_chmod(TEST_FILE, 0777), 0);
-    
-    TEST_ASSERT_EQ(wali_syscall_stat(TEST_FILE, &st), 0);
-    // Verify mode. Note: 0777 might be masked by umask, but we forced chmod.
-    // Usually chmod overrides umask.
-    TEST_ASSERT_EQ((st.st_mode & 0777), 0777);
-    
-    TEST_LOG("Testing fchmod to 0600");
-    long fd = wali_syscall_open(TEST_FILE, O_RDONLY, 0);
-    TEST_ASSERT_NE(fd, -1);
-    
-    TEST_ASSERT_EQ(wali_syscall_fchmod(fd, 0600), 0);
-    wali_syscall_close(fd);
-    
-    TEST_ASSERT_EQ(wali_syscall_stat(TEST_FILE, &st), 0);
-    TEST_ASSERT_EQ((st.st_mode & 0777), 0600);
-    
-    return 0;
+    if (test_init_args() != 0) return -1;
+    if (argc < 4) return -1;
+    int expect_ok = strcmp(argv[1], "ok") == 0;
+    int mode = 0;
+    for (const char *p = argv[2]; *p; p++) {
+        if (*p < '0' || *p > '7') return -1;
+        mode = (mode << 3) | (*p - '0');
+    }
+    const char *path = argv[3];
+    long r = wali_syscall_chmod(path, mode);
+    int success = (r == 0);
+    return (success == expect_ok) ? 0 : -1;
 }

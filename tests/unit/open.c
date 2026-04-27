@@ -82,10 +82,10 @@ int wali_close(int fd) { return wali_syscall_close(fd); }
 
 int test(void) {
   if (test_init_args() != 0) return -1;
-  
-  if (argc < 2) return -1;
-  const char *mode = argv[0];
-  const char *path = argv[1];
+
+  if (argc < 3) return -1;
+  const char *mode = argv[1];
+  const char *path = argv[2];
   
   int flags = 0;
   int expected_success = 1;

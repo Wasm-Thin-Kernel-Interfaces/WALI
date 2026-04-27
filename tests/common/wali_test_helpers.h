@@ -178,7 +178,9 @@ static int test_init_env(void) {
           return 1; // Line too long
       }
       if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
-      putenv(line);
+      // putenv stores the pointer (POSIX), so each entry needs its own
+      // long-lived storage. strdup is cheap and these env files are tiny.
+      putenv(strdup(line));
   }
   fclose(f);
   return 0;

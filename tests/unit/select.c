@@ -1,89 +1,70 @@
-// CMD: args="basic"
+// CMD: args="empty_timeout"
+// CMD: args="ready_after_write"
+// CMD: args="timeout_zero"
+// CMD: args="nfds_zero"
 
 #include "wali_start.c"
-#include <unistd.h>
 #include <sys/select.h>
-#include <string.h>
 #include <sys/time.h>
+#include <string.h>
+
+#ifdef __wasm__
+__attribute__((__import_module__("wali"), __import_name__("SYS_select")))
+long __imported_wali_select(int nfds, fd_set *r, fd_set *w, fd_set *e, struct timeval *t);
+int wali_select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *t) { return (int)__imported_wali_select(n, r, w, e, t); }
+#else
+#include <sys/syscall.h>
+int wali_select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *t) {
+#ifdef SYS_select
+    return syscall(SYS_select, n, r, w, e, t);
+#else
+    sigset_t s; sigemptyset(&s);
+    struct timespec ts = { .tv_sec = t ? t->tv_sec : 0, .tv_nsec = t ? t->tv_usec * 1000L : 0 };
+    return syscall(SYS_pselect6, n, r, w, e, t ? &ts : NULL, &s);
+#endif
+}
+#endif
 
 #ifdef WALI_TEST_WRAPPER
 int test_setup(int argc, char **argv) { return 0; }
 int test_cleanup(int argc, char **argv) { return 0; }
 #endif
 
-#ifdef __wasm__
-__attribute__((__import_module__("wali"), __import_name__("SYS_select")))
-long __imported_wali_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout);
-__attribute__((__import_module__("wali"), __import_name__("SYS_pipe")))
-long __imported_wali_pipe(int *pipefd);
-__attribute__((__import_module__("wali"), __import_name__("SYS_write")))
-long __imported_wali_write(int fd, const void *buf, size_t count);
-__attribute__((__import_module__("wali"), __import_name__("SYS_close")))
-long __imported_wali_close(int fd);
-
-int wali_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout) { 
-    return (int)__imported_wali_select(nfds, readfds, writefds, exceptfds, timeout); 
-}
-int wali_pipe(int *pipefd) { return (int)__imported_wali_pipe(pipefd); }
-int wali_write(int fd, const void *buf, size_t count) { return (int)__imported_wali_write(fd, buf, count); }
-int wali_close(int fd) { return (int)__imported_wali_close(fd); }
-
-#else
-#include <sys/syscall.h>
-int wali_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds, struct timeval *timeout) {
-#ifdef SYS_select
-    return syscall(SYS_select, nfds, readfds, writefds, exceptfds, timeout);
-#else
-    sigset_t set;
-    sigemptyset(&set);
-    return syscall(SYS_pselect6, nfds, readfds, writefds, exceptfds, timeout, &set);
-#endif
-}
-int wali_pipe(int *pipefd) {
-#ifdef SYS_pipe
-    return syscall(SYS_pipe, pipefd);
-#else
-    return syscall(SYS_pipe2, pipefd, 0);
-#endif
-}
-int wali_write(int fd, const void *buf, size_t count) { return syscall(SYS_write, fd, buf, count); }
-int wali_close(int fd) { return syscall(SYS_close, fd); }
-#endif
-
 int test(void) {
     if (test_init_args() != 0) return -1;
-    
+    const char *mode = (argc > 1) ? argv[1] : "empty_timeout";
+
+    if (!strcmp(mode, "nfds_zero")) {
+        struct timeval tv = {0, 1000};  // 1ms
+        long r = wali_select(0, NULL, NULL, NULL, &tv);
+        return (r == 0) ? 0 : -1;
+    }
+
     int pfd[2];
-    if (wali_pipe(pfd) != 0) return -1;
-    
+    if (wali_syscall_pipe2(pfd, 0) != 0) return -1;
     fd_set rfds;
-    struct timeval tv;
-    
-    // 1. Check no data
-    FD_ZERO(&rfds);
-    FD_SET(pfd[0], &rfds);
-    
-    tv.tv_sec = 0;
-    tv.tv_usec = 1000;
-    
-    int retval = wali_select(pfd[0] + 1, &rfds, NULL, NULL, &tv);
-    if (retval != 0) return -1; // Should timeout
-    
-    // 2. Write data
-    if (wali_write(pfd[1], "A", 1) != 1) return -1;
-    
-    // 3. Check data available
-    FD_ZERO(&rfds);
-    FD_SET(pfd[0], &rfds);
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-    
-    retval = wali_select(pfd[0] + 1, &rfds, NULL, NULL, &tv);
-    if (retval <= 0) return -1;
-    
-    if (!FD_ISSET(pfd[0], &rfds)) return -1;
-    
-    wali_close(pfd[0]);
-    wali_close(pfd[1]);
-    return 0;
+    int ret = -1;
+
+    if (!strcmp(mode, "empty_timeout")) {
+        FD_ZERO(&rfds); FD_SET(pfd[0], &rfds);
+        struct timeval tv = {0, 1000};
+        long r = wali_select(pfd[0] + 1, &rfds, NULL, NULL, &tv);
+        ret = (r == 0) ? 0 : -1;
+    } else if (!strcmp(mode, "timeout_zero")) {
+        FD_ZERO(&rfds); FD_SET(pfd[0], &rfds);
+        struct timeval tv = {0, 0};
+        long r = wali_select(pfd[0] + 1, &rfds, NULL, NULL, &tv);
+        ret = (r == 0) ? 0 : -1;
+    } else if (!strcmp(mode, "ready_after_write")) {
+        if (wali_syscall_write(pfd[1], "A", 1) != 1) goto out;
+        FD_ZERO(&rfds); FD_SET(pfd[0], &rfds);
+        struct timeval tv = {1, 0};
+        long r = wali_select(pfd[0] + 1, &rfds, NULL, NULL, &tv);
+        ret = (r == 1 && FD_ISSET(pfd[0], &rfds)) ? 0 : -1;
+    }
+
+out:
+    wali_syscall_close(pfd[0]);
+    wali_syscall_close(pfd[1]);
+    return ret;
 }

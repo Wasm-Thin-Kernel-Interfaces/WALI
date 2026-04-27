@@ -1,27 +1,15 @@
-// CMD: setup="" args="" cleanup=""
+// CMD: args="initval_zero"
+// CMD: args="initval_ten"
+// CMD: args="read_value"
+// CMD: args="write_then_read"
 
 #include "wali_start.c"
-// #include <unistd.h>
-// #include <fcntl.h>
-// #include <stdint.h>
-// #include <string.h>
-
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <stdint.h>
-
-#ifdef WALI_TEST_WRAPPER
-int test_setup(int argc, char **argv) { return 0; }
-int test_cleanup(int argc, char **argv) { return 0; }
-#endif
+#include <string.h>
 
 #ifdef __wasm__
 WALI_IMPORT("SYS_eventfd") long wali_syscall_eventfd(unsigned int initval);
-WALI_IMPORT("SYS_eventfd2") long wali_syscall_eventfd2(unsigned int initval, int flags);
-
 int wali_eventfd(unsigned int initval) { return (int)wali_syscall_eventfd(initval); }
-int wali_eventfd2(unsigned int initval, int flags) { return (int)wali_syscall_eventfd2(initval, flags); }
 #else
 #include <sys/syscall.h>
 int wali_eventfd(unsigned int initval) {
@@ -31,45 +19,35 @@ int wali_eventfd(unsigned int initval) {
     return syscall(SYS_eventfd2, initval, 0);
 #endif
 }
-int wali_eventfd2(unsigned int initval, int flags) { return syscall(SYS_eventfd2, initval, flags); }
 #endif
 
-#ifndef EFD_CLOEXEC
-#define EFD_CLOEXEC 02000000
+#ifdef WALI_TEST_WRAPPER
+int test_setup(int argc, char **argv) { return 0; }
+int test_cleanup(int argc, char **argv) { return 0; }
 #endif
-#ifndef EFD_NONBLOCK
-#define EFD_NONBLOCK 04000
-#endif
-
-int test_eventfd_logic(int efd) {
-    TEST_ASSERT(efd >= 0);
-
-    uint64_t val;
-    // Should be able to read the 10
-    TEST_ASSERT_EQ(wali_syscall_read(efd, &val, sizeof(val)), sizeof(val));
-    TEST_ASSERT_EQ(val, 10);
-
-    // Now it's 0. Write 5.
-    val = 5;
-    TEST_ASSERT_EQ(wali_syscall_write(efd, &val, sizeof(val)), sizeof(val));
-
-    // Read 5.
-    TEST_ASSERT_EQ(wali_syscall_read(efd, &val, sizeof(val)), sizeof(val));
-    TEST_ASSERT_EQ(val, 5);
-    
-    wali_syscall_close(efd);
-    return 0;
-}
 
 int test(void) {
-    TEST_LOG("Testing eventfd(10)");
-    int efd = wali_eventfd(10);
-    if (test_eventfd_logic(efd) != 0) return -1;
-    
-    TEST_LOG("Testing eventfd2(10, EFD_CLOEXEC|EFD_NONBLOCK)");
-    efd = wali_eventfd2(10, EFD_CLOEXEC | EFD_NONBLOCK);
-    if (test_eventfd_logic(efd) != 0) return -1;
+    if (test_init_args() != 0) return -1;
+    const char *mode = (argc > 1) ? argv[1] : "initval_zero";
 
-    return 0;
+    unsigned int initval = (!strcmp(mode, "initval_zero")) ? 0 : 10;
+    int efd = wali_eventfd(initval);
+    if (efd < 0) return -1;
+
+    int ret = -1;
+    uint64_t val;
+    if (!strcmp(mode, "initval_zero") || !strcmp(mode, "initval_ten")) {
+        ret = 0;
+    } else if (!strcmp(mode, "read_value")) {
+        if (wali_syscall_read(efd, &val, sizeof(val)) == sizeof(val) && val == 10) ret = 0;
+    } else if (!strcmp(mode, "write_then_read")) {
+        // Drain initial 10, write 5, read 5.
+        if (wali_syscall_read(efd, &val, sizeof(val)) != sizeof(val)) goto out;
+        val = 5;
+        if (wali_syscall_write(efd, &val, sizeof(val)) != sizeof(val)) goto out;
+        if (wali_syscall_read(efd, &val, sizeof(val)) == sizeof(val) && val == 5) ret = 0;
+    }
+out:
+    wali_syscall_close(efd);
+    return ret;
 }
-

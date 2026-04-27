@@ -1,82 +1,44 @@
-// CMD: setup="clean /tmp/test_dir" args="create /tmp/test_dir" cleanup="/tmp/test_dir"
-// CMD: setup="create /tmp/exist_dir" args="fail /tmp/exist_dir" cleanup="/tmp/exist_dir"
-// CMD: args="no_parent /tmp/p/c"
-// CMD: setup="clean /tmp/mode_dir" args="mode /tmp/mode_dir" cleanup="/tmp/mode_dir"
+// CMD: setup="clean /tmp/mkdir_a"   args="ok      /tmp/mkdir_a"   cleanup="/tmp/mkdir_a"
+// CMD: setup="create /tmp/mkdir_b"  args="exists  /tmp/mkdir_b"  cleanup="/tmp/mkdir_b"
+// CMD:                                args="no_parent /tmp/mkdir_p/c" cleanup=""
+// CMD: setup="clean /tmp/mkdir_d"   args="mode    /tmp/mkdir_d"   cleanup="0700 /tmp/mkdir_d"
 
 #include "wali_start.c"
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <unistd.h>
 #include <string.h>
 
 #ifdef WALI_TEST_WRAPPER
 #include <stdlib.h>
-#include <stdio.h>
-
-int file_exists(const char *path) {
-    return access(path, F_OK) == 0;
-}
-
 int test_setup(int argc, char **argv) {
-    if (argc < 1) return 0;
-    const char *mode = argv[0];
-    const char *path = argv[1];
-    
-    if (strcmp(mode, "create") == 0) {
-        mkdir(path, 0755);
-    } else if (strcmp(mode, "clean") == 0) {
-        rmdir(path); // Ensure clean
-    }
+    if (argc < 2) return 0;
+    if (!strcmp(argv[0], "create"))     mkdir(argv[1], 0755);
+    else if (!strcmp(argv[0], "clean")) rmdir(argv[1]);
     return 0;
 }
-
 int test_cleanup(int argc, char **argv) {
-    if (argc < 1) return 0;
-    rmdir(argv[0]);
-    return 0;
+    if (argc == 0) return 0;
+    if (argc == 1) { rmdir(argv[0]); return 0; }
+    // 2 args: expected_mode path — verify the dir we made has the right mode.
+    long expected = strtol(argv[0], NULL, 8);
+    const char *path = argv[1];
+    struct stat st;
+    int ok = (stat(path, &st) == 0) && S_ISDIR(st.st_mode) && ((st.st_mode & 0777) == (mode_t)expected);
+    rmdir(path);
+    return ok ? 0 : -1;
 }
-#endif
-
-#ifdef __wasm__
-__attribute__((__import_module__("wali"), __import_name__("SYS_mkdir")))
-long __imported_wali_mkdir(const char *pathname, int mode);
-
-__attribute__((__import_module__("wali"), __import_name__("SYS_rmdir")))
-long __imported_wali_rmdir(const char *pathname);
-
-int wali_mkdir(const char *pathname, int mode) {
-  return (int) __imported_wali_mkdir(pathname, mode);
-}
-int wali_rmdir(const char *pathname) {
-  return (int) __imported_wali_rmdir(pathname);
-}
-#else
-int wali_mkdir(const char *pathname, int mode) { return wali_syscall_mkdir(pathname, mode); }
-int wali_rmdir(const char *pathname) { return wali_syscall_rmdir(pathname); }
 #endif
 
 int test(void) {
-  if (test_init_args() != 0) return -1;
-  if (argc != 2) return -1;
-  const char *mode = argv[0];
-  const char *path = argv[1];
-  
-  if (strcmp(mode, "create") == 0) {
-      if (wali_mkdir(path, 0755) != 0) return -1;
-      return 0;
-  } else if (strcmp(mode, "fail") == 0) {
-      if (wali_mkdir(path, 0755) == 0) return -1; // Should fail as it exists
-      return 0;
-  } else if (strcmp(mode, "no_parent") == 0) {
-      if (wali_mkdir(path, 0755) == 0) return -1;
-      return 0;
-  } else if (strcmp(mode, "mode") == 0) {
-      // 0700
-      if (wali_mkdir(path, 0700) != 0) return -1;
-      // We can't verify stat mode without stat syscall but return code success is good proxy
-      // Assuming stat.c tests stat separately.
-      return 0;
-  }
-  
-  return -1;
+    if (test_init_args() != 0) return -1;
+    if (argc < 3) return -1;
+    const char *mode = argv[1];
+    const char *path = argv[2];
+
+    int permission = !strcmp(mode, "mode") ? 0700 : 0755;
+    int expect_ok = !strcmp(mode, "ok") || !strcmp(mode, "mode");
+
+    long r = wali_syscall_mkdir(path, permission);
+    int success = (r == 0);
+    return (success == expect_ok) ? 0 : -1;
 }

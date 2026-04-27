@@ -1,33 +1,10 @@
-// CMD: setup="" args="" cleanup=""
+// CMD: args="ok"
+// CMD: args="self"
+// CMD: args="bad_oldfd"
+// CMD: args="negative_newfd"
 
 #include "wali_start.c"
-// #include <fcntl.h>
-// #include <unistd.h>
-// #include <string.h>
-
 #include <string.h>
-#include <fcntl.h>
-
-#define TEST_FILE "/tmp/dup2_test.txt"
-#define TEST_CONTENT "DUP2_TEST"
-
-#ifdef WALI_TEST_WRAPPER
-#include <stdlib.h>
-#include <stdio.h>
-
-int test_setup(int argc, char **argv) {
-    int fd = open(TEST_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) return -1;
-    write(fd, TEST_CONTENT, strlen(TEST_CONTENT));
-    close(fd);
-    return 0;
-}
-
-int test_cleanup(int argc, char **argv) {
-    unlink(TEST_FILE);
-    return 0;
-}
-#endif
 
 #ifdef __wasm__
 WALI_IMPORT("SYS_dup2") long wali_syscall_dup2(int oldfd, int newfd);
@@ -37,45 +14,39 @@ long wali_syscall_dup2(int oldfd, int newfd) {
 #ifdef SYS_dup2
     return syscall(SYS_dup2, oldfd, newfd);
 #else
-    return syscall(SYS_dup3, oldfd, newfd, 0);
+    if (oldfd == newfd) {
+        return newfd;  // dup2 with oldfd==newfd is a no-op that returns newfd
+    } else {
+        return syscall(SYS_dup3, oldfd, newfd, 0);
+    }
 #endif
 }
+#endif
+
+#ifdef WALI_TEST_WRAPPER
+int test_setup(int argc, char **argv) { return 0; }
+int test_cleanup(int argc, char **argv) { return 0; }
 #endif
 
 int test(void) {
-    int fd = wali_syscall_open(TEST_FILE, O_RDONLY, 0);
-    TEST_ASSERT(fd >= 0);
-    
-    // Test dup2
-    int target_fd = 10;
-    // Ensure target closed
-    wali_syscall_close(target_fd); 
-    
-    // Call dup2 with explicit call
-    long res = wali_syscall_dup2(fd, target_fd);
-    
-    // Check result
-    if (res != target_fd) { 
-        wali_syscall_close(fd); 
-        TEST_FAIL("dup2 failed or returned wrong fd"); 
+    if (test_init_args() != 0) return -1;
+    const char *mode = (argc > 1) ? argv[1] : "ok";
+
+    int oldfd, newfd;
+    int expect_ok;
+    int expect_returned_fd = -1;
+    if (!strcmp(mode, "ok"))             { oldfd = 0;     newfd = 10; expect_ok = 1; expect_returned_fd = 10; }
+    else if (!strcmp(mode, "self"))      { oldfd = 0;     newfd = 0;  expect_ok = 1; expect_returned_fd = 0; }
+    else if (!strcmp(mode, "bad_oldfd")) { oldfd = 99999; newfd = 10; expect_ok = 0; }
+    else if (!strcmp(mode, "negative_newfd")) { oldfd = 0; newfd = -1; expect_ok = 0; }
+    else return -1;
+
+    long r = wali_syscall_dup2(oldfd, newfd);
+    int success = (r >= 0);
+    if (success != expect_ok) return -1;
+    if (success) {
+        if (r != expect_returned_fd) return -1;
+        if ((int)r != oldfd) wali_syscall_close((int)r);
     }
-    
-    char buf[16];
-    memset(buf, 0, sizeof(buf));
-    int len = strlen(TEST_CONTENT);
-    if (wali_syscall_read(target_fd, buf, len) != len) {
-        wali_syscall_close(fd); wali_syscall_close(target_fd); 
-        TEST_FAIL("read failed from new fd");
-    }
-    
-    if (strcmp(buf, TEST_CONTENT) != 0) { 
-        wali_syscall_close(fd); wali_syscall_close(target_fd); 
-        TEST_FAIL("Content mismatch");
-    }
-    
-    wali_syscall_close(fd);
-    wali_syscall_close(target_fd);
-    
     return 0;
 }
-

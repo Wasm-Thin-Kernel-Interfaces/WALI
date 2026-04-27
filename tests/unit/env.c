@@ -1,24 +1,29 @@
-// CMD: env="TEST_VAR=hello"
-// CMD: env="TEST_VAR=world"
+// CMD: env="TEST_VAR=hello"     args="TEST_VAR hello"
+// CMD: env="TEST_VAR=world"     args="TEST_VAR world"
+// CMD: env="A=foo B=bar"        args="A foo"
+// CMD: env="A=foo B=bar"        args="B bar"
+// CMD: env="EMPTY="             args="EMPTY ___EMPTY___"
+// CMD:                           args="UNSET_VAR ___MISSING___"
 
 #include "wali_start.c"
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 int test(void) {
+    if (test_init_args() != 0) return -1;
     test_init_env();
+    if (argc < 3) return -1;
+    const char *name = argv[1];
+    const char *expected = argv[2];
 
-    char *val = getenv("TEST_VAR");
-    if (!val) {
-        TEST_FAIL("TEST_VAR not found");
-    }
-    
-    // Check expected values
-    if (strcmp(val, "hello") != 0 && strcmp(val, "world") != 0) {
-        TEST_FAIL("Unexpected TEST_VAR value");
-    }
+    char *val = getenv(name);
 
-    return 0;
+    if (!strcmp(expected, "___MISSING___")) {
+        return (val == NULL) ? 0 : -1;
+    }
+    if (!strcmp(expected, "___EMPTY___")) {
+        return (val != NULL && val[0] == '\0') ? 0 : -1;
+    }
+    if (!val) return -1;
+    return strcmp(val, expected) == 0 ? 0 : -1;
 }
-

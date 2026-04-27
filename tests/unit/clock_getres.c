@@ -1,6 +1,12 @@
-// CMD: setup="" args="" cleanup=""
+// CMD: args="realtime"
+// CMD: args="monotonic"
+// CMD: args="boottime"
+// CMD: args="process_cputime"
+// CMD: args="thread_cputime"
+// CMD: args="invalid"
 
 #include "wali_start.c"
+#include <string.h>
 
 #ifdef WALI_TEST_WRAPPER
 int test_setup(int argc, char **argv) { return 0; }
@@ -8,18 +14,26 @@ int test_cleanup(int argc, char **argv) { return 0; }
 #endif
 
 int test(void) {
+    if (test_init_args() != 0) return -1;
+    const char *mode = (argc > 1) ? argv[1] : "realtime";
+
+    clockid_t clk;
+    int expect_ok = 1;
+    if (!strcmp(mode, "realtime"))         clk = CLOCK_REALTIME;
+    else if (!strcmp(mode, "monotonic"))   clk = CLOCK_MONOTONIC;
+    else if (!strcmp(mode, "boottime"))    clk = CLOCK_BOOTTIME;
+    else if (!strcmp(mode, "process_cputime")) clk = CLOCK_PROCESS_CPUTIME_ID;
+    else if (!strcmp(mode, "thread_cputime"))  clk = CLOCK_THREAD_CPUTIME_ID;
+    else if (!strcmp(mode, "invalid"))     { clk = (clockid_t)9999; expect_ok = 0; }
+    else return -1;
+
     struct timespec res;
-    
-    TEST_LOG("Testing clock_getres(CLOCK_REALTIME)");
-    TEST_ASSERT_EQ(wali_syscall_clock_getres(CLOCK_REALTIME, &res), 0);
-    
-    // Resolution should be positive
-    TEST_ASSERT(res.tv_sec > 0 || (res.tv_sec == 0 && res.tv_nsec > 0));
-    
-    TEST_LOG("Testing clock_getres(CLOCK_MONOTONIC)");
-    TEST_ASSERT_EQ(wali_syscall_clock_getres(CLOCK_MONOTONIC, &res), 0);
-    
-    TEST_ASSERT(res.tv_sec > 0 || (res.tv_sec == 0 && res.tv_nsec > 0));
-    
+    long r = wali_syscall_clock_getres(clk, &res);
+    int success = (r == 0);
+    if (success != expect_ok) return -1;
+    if (expect_ok) {
+        // Resolution must be strictly positive.
+        if (res.tv_sec < 0 || (res.tv_sec == 0 && res.tv_nsec <= 0)) return -1;
+    }
     return 0;
 }

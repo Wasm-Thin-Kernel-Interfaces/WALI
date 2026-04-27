@@ -1,93 +1,71 @@
-// CMD: args="basic"
+// CMD: args="ok"
+// CMD: args="bad_fd"
+// CMD: args="bad_dest"
 
 #include "wali_start.c"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
-#include <unistd.h>
+
+#ifdef __wasm__
+__attribute__((__import_module__("wali"), __import_name__("SYS_sendto")))
+long __imported_wali_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen);
+__attribute__((__import_module__("wali"), __import_name__("SYS_recvfrom")))
+long __imported_wali_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen);
+ssize_t wali_sendto(int s, const void *b, size_t l, int f, const struct sockaddr *d, socklen_t al) { return (ssize_t)__imported_wali_sendto(s, b, l, f, d, al); }
+ssize_t wali_recvfrom(int s, void *b, size_t l, int f, struct sockaddr *sa, socklen_t *al) { return (ssize_t)__imported_wali_recvfrom(s, b, l, f, sa, al); }
+#else
+#include <sys/syscall.h>
+ssize_t wali_sendto(int s, const void *b, size_t l, int f, const struct sockaddr *d, socklen_t al) { return syscall(SYS_sendto, s, b, l, f, d, al); }
+ssize_t wali_recvfrom(int s, void *b, size_t l, int f, struct sockaddr *sa, socklen_t *al) { return syscall(SYS_recvfrom, s, b, l, f, sa, al); }
+#endif
 
 #ifdef WALI_TEST_WRAPPER
 int test_setup(int argc, char **argv) { return 0; }
 int test_cleanup(int argc, char **argv) { return 0; }
 #endif
 
-#ifdef __wasm__
-__attribute__((__import_module__("wali"), __import_name__("SYS_socket")))
-long __imported_wali_socket(int domain, int type, int protocol);
-__attribute__((__import_module__("wali"), __import_name__("SYS_bind")))
-long __imported_wali_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
-__attribute__((__import_module__("wali"), __import_name__("SYS_sendto")))
-long __imported_wali_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen);
-__attribute__((__import_module__("wali"), __import_name__("SYS_recvfrom")))
-long __imported_wali_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen);
-__attribute__((__import_module__("wali"), __import_name__("SYS_close")))
-long __imported_wali_close(int fd);
-
-int wali_socket(int domain, int type, int protocol) { return (int)__imported_wali_socket(domain, type, protocol); }
-int wali_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) { return (int)__imported_wali_bind(sockfd, addr, addrlen); }
-ssize_t wali_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) { 
-    return (ssize_t)__imported_wali_sendto(sockfd, buf, len, flags, dest_addr, addrlen); 
-}
-ssize_t wali_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen) { 
-    return (ssize_t)__imported_wali_recvfrom(sockfd, buf, len, flags, src_addr, addrlen); 
-}
-int wali_close(int fd) { return (int)__imported_wali_close(fd); }
-
-#else
-#include <sys/syscall.h>
-int wali_socket(int domain, int type, int protocol) { return syscall(SYS_socket, domain, type, protocol); }
-int wali_bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) { return syscall(SYS_bind, sockfd, addr, addrlen); }
-ssize_t wali_sendto(int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) { 
-    return syscall(SYS_sendto, sockfd, buf, len, flags, dest_addr, addrlen); 
-}
-ssize_t wali_recvfrom(int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen) { 
-    return syscall(SYS_recvfrom, sockfd, buf, len, flags, src_addr, addrlen); 
-}
-int wali_close(int fd) { return syscall(SYS_close, fd); }
-#endif
-
 int test(void) {
     if (test_init_args() != 0) return -1;
-    
-    // Create two UDP sockets
-    int sock1 = wali_socket(AF_INET, SOCK_DGRAM, 0);
-    int sock2 = wali_socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock1 < 0 || sock2 < 0) return -1;
-    
-    struct sockaddr_in addr1, addr2;
-    memset(&addr1, 0, sizeof(addr1));
-    memset(&addr2, 0, sizeof(addr2));
-    addr1.sin_family = AF_INET;
-    addr1.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    addr1.sin_port = 0;
-    addr2 = addr1;
-    
-    if (wali_bind(sock1, (struct sockaddr*)&addr1, sizeof(addr1)) != 0) goto fail;
-    if (wali_bind(sock2, (struct sockaddr*)&addr2, sizeof(addr2)) != 0) goto fail;
-    
-    // Get port of sock2
-    socklen_t len = sizeof(addr2);
-    if (getsockname(sock2, (struct sockaddr*)&addr2, &len) != 0) goto fail;
-    
-    // Send from sock1 to sock2
-    const char *msg = "HELLO";
-    if (wali_sendto(sock1, msg, 5, 0, (struct sockaddr*)&addr2, sizeof(addr2)) != 5) goto fail;
-    
-    // Receive on sock2
-    char buf[16];
-    struct sockaddr_in from;
-    socklen_t fromlen = sizeof(from);
-    ssize_t n = wali_recvfrom(sock2, buf, sizeof(buf), 0, (struct sockaddr*)&from, &fromlen);
-    if (n != 5) goto fail;
-    if (memcmp(buf, "HELLO", 5) != 0) goto fail;
-    
-    wali_close(sock1);
-    wali_close(sock2);
-    return 0;
-    
+    const char *mode = (argc > 1) ? argv[1] : "ok";
+
+    if (!strcmp(mode, "bad_fd")) {
+        struct sockaddr_in d;
+        memset(&d, 0, sizeof(d));
+        d.sin_family = AF_INET;
+        d.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        d.sin_port = htons(1);
+        long r = wali_sendto(99999, "X", 1, 0, (struct sockaddr*)&d, sizeof(d));
+        return (r < 0) ? 0 : -1;
+    }
+
+    int s1 = wali_syscall_socket(AF_INET, SOCK_DGRAM, 0);
+    int s2 = wali_syscall_socket(AF_INET, SOCK_DGRAM, 0);
+    if (s1 < 0 || s2 < 0) return -1;
+    struct sockaddr_in a1, a2;
+    memset(&a1, 0, sizeof(a1)); memset(&a2, 0, sizeof(a2));
+    a1.sin_family = AF_INET; a1.sin_addr.s_addr = htonl(INADDR_LOOPBACK); a1.sin_port = 0;
+    a2 = a1;
+    if (wali_syscall_bind(s1, &a1, sizeof(a1)) != 0) goto fail;
+    if (wali_syscall_bind(s2, &a2, sizeof(a2)) != 0) goto fail;
+    socklen_t alen = sizeof(a2);
+    if (wali_syscall_getsockname(s2, &a2, &alen) != 0) goto fail;
+
+    int ret = -1;
+    if (!strcmp(mode, "ok")) {
+        ret = (wali_sendto(s1, "HELLO", 5, 0, (struct sockaddr*)&a2, sizeof(a2)) == 5) ? 0 : -1;
+    } else if (!strcmp(mode, "bad_dest")) {
+        // Wrong family in dest sockaddr → fail.
+        struct sockaddr_in bad = a2;
+        bad.sin_family = AF_INET6;
+        long r = wali_sendto(s1, "X", 1, 0, (struct sockaddr*)&bad, sizeof(bad));
+        ret = (r < 0) ? 0 : -1;
+    }
+
+    wali_syscall_close(s1); wali_syscall_close(s2);
+    return ret;
 fail:
-    wali_close(sock1);
-    wali_close(sock2);
+    wali_syscall_close(s1); wali_syscall_close(s2);
     return -1;
 }

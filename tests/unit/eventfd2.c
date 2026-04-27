@@ -1,64 +1,60 @@
-// CMD: args="basic"
+// CMD: args="nonblock"
+// CMD: args="cloexec"
+// CMD: args="semaphore"
+// CMD: args="nonblock_empty_read"
 
 #include "wali_start.c"
 #include <sys/eventfd.h>
-#include <unistd.h>
+#include <fcntl.h>
 #include <stdint.h>
+#include <string.h>
+
+#ifdef __wasm__
+WALI_IMPORT("SYS_eventfd2") long wali_syscall_eventfd2(unsigned int initval, int flags);
+int wali_eventfd2(unsigned int initval, int flags) { return (int)wali_syscall_eventfd2(initval, flags); }
+#else
+#include <sys/syscall.h>
+int wali_eventfd2(unsigned int initval, int flags) { return syscall(SYS_eventfd2, initval, flags); }
+#endif
 
 #ifdef WALI_TEST_WRAPPER
 int test_setup(int argc, char **argv) { return 0; }
 int test_cleanup(int argc, char **argv) { return 0; }
 #endif
 
-#ifdef __wasm__
-__attribute__((__import_module__("wali"), __import_name__("SYS_eventfd2")))
-long __imported_wali_eventfd2(unsigned int initval, int flags);
-__attribute__((__import_module__("wali"), __import_name__("SYS_write")))
-long __imported_wali_write(int fd, const void *buf, size_t count);
-__attribute__((__import_module__("wali"), __import_name__("SYS_read")))
-long __imported_wali_read(int fd, void *buf, size_t count);
-__attribute__((__import_module__("wali"), __import_name__("SYS_close")))
-long __imported_wali_close(int fd);
-
-int wali_eventfd2(unsigned int initval, int flags) { return (int)__imported_wali_eventfd2(initval, flags); }
-ssize_t wali_write(int fd, const void *buf, size_t count) { return (ssize_t)__imported_wali_write(fd, buf, count); }
-ssize_t wali_read(int fd, void *buf, size_t count) { return (ssize_t)__imported_wali_read(fd, buf, count); }
-int wali_close(int fd) { return (int)__imported_wali_close(fd); }
-
-#else
-#include <sys/syscall.h>
-int wali_eventfd2(unsigned int initval, int flags) { return syscall(SYS_eventfd2, initval, flags); }
-ssize_t wali_write(int fd, const void *buf, size_t count) { return syscall(SYS_write, fd, buf, count); }
-ssize_t wali_read(int fd, void *buf, size_t count) { return syscall(SYS_read, fd, buf, count); }
-int wali_close(int fd) { return syscall(SYS_close, fd); }
-#endif
-
 int test(void) {
     if (test_init_args() != 0) return -1;
-    
-    // Create with non-blocking flag
-    int efd = wali_eventfd2(0, EFD_NONBLOCK);
+    const char *mode = (argc > 1) ? argv[1] : "nonblock";
+
+    unsigned int initval = 5;
+    int flags = 0;
+    if (!strcmp(mode, "nonblock"))             flags = EFD_NONBLOCK;
+    else if (!strcmp(mode, "cloexec"))         flags = EFD_CLOEXEC;
+    else if (!strcmp(mode, "semaphore"))       { flags = EFD_SEMAPHORE; initval = 3; }
+    else if (!strcmp(mode, "nonblock_empty_read")) { flags = EFD_NONBLOCK; initval = 0; }
+    else return -1;
+
+    int efd = wali_eventfd2(initval, flags);
     if (efd < 0) return -1;
-    
-    // Write value
-    uint64_t val = 5;
-    if (wali_write(efd, &val, sizeof(val)) != sizeof(val)) {
-        wali_close(efd);
-        return -1;
+
+    int ret = -1;
+    uint64_t val;
+
+    if (!strcmp(mode, "nonblock")) {
+        if (wali_syscall_read(efd, &val, sizeof(val)) == sizeof(val) && val == 5) ret = 0;
+    } else if (!strcmp(mode, "cloexec")) {
+        long fdflags = wali_syscall_fcntl(efd, F_GETFD, 0);
+        if (fdflags >= 0 && (fdflags & FD_CLOEXEC)) ret = 0;
+    } else if (!strcmp(mode, "semaphore")) {
+        // Each read returns 1 (semaphore mode).
+        if (wali_syscall_read(efd, &val, sizeof(val)) != sizeof(val) || val != 1) goto out;
+        if (wali_syscall_read(efd, &val, sizeof(val)) != sizeof(val) || val != 1) goto out;
+        ret = 0;
+    } else if (!strcmp(mode, "nonblock_empty_read")) {
+        // Empty + non-blocking → read fails with EAGAIN.
+        if (wali_syscall_read(efd, &val, sizeof(val)) < 0) ret = 0;
     }
-    
-    // Read value
-    uint64_t rval = 0;
-    if (wali_read(efd, &rval, sizeof(rval)) != sizeof(rval)) {
-        wali_close(efd);
-        return -1;
-    }
-    
-    if (rval != 5) {
-        wali_close(efd);
-        return -1;
-    }
-    
-    wali_close(efd);
-    return 0;
+out:
+    wali_syscall_close(efd);
+    return ret;
 }

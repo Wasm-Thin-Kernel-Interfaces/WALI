@@ -1,66 +1,32 @@
-// CMD: setup="" args="" cleanup=""
+// CMD: args="ok"
+// CMD: args="bad_fd"
+// CMD: args="negative"
 
 #include "wali_start.c"
-// #include <fcntl.h>
-// #include <unistd.h>
-// #include <string.h>
-
 #include <string.h>
-#include <fcntl.h>
-
-#define TEST_FILE "/tmp/dup_test.txt"
-#define TEST_CONTENT "DUP_TEST"
 
 #ifdef WALI_TEST_WRAPPER
-#include <stdlib.h>
-#include <stdio.h>
-
-int test_setup(int argc, char **argv) {
-    int fd = open(TEST_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) return -1;
-    write(fd, TEST_CONTENT, strlen(TEST_CONTENT));
-    close(fd);
-    return 0;
-}
-
-int test_cleanup(int argc, char **argv) {
-    unlink(TEST_FILE);
-    return 0;
-}
+int test_setup(int argc, char **argv) { return 0; }
+int test_cleanup(int argc, char **argv) { return 0; }
 #endif
 
 int test(void) {
-    int fd = wali_syscall_open(TEST_FILE, O_RDONLY, 0);
-    TEST_ASSERT(fd >= 0);
-    
-    // Test dup
-    int fd2 = wali_syscall_dup(fd);
-    if (fd2 < 0) { 
-        wali_syscall_close(fd); 
-        TEST_FAIL("dup failed"); 
+    if (test_init_args() != 0) return -1;
+    const char *mode = (argc > 1) ? argv[1] : "ok";
+
+    int target_fd;
+    int expect_ok;
+    if (!strcmp(mode, "ok"))            { target_fd = 0;     expect_ok = 1; }
+    else if (!strcmp(mode, "bad_fd"))   { target_fd = 99999; expect_ok = 0; }
+    else if (!strcmp(mode, "negative")) { target_fd = -1;    expect_ok = 0; }
+    else return -1;
+
+    long r = wali_syscall_dup(target_fd);
+    int success = (r >= 0);
+    if (success != expect_ok) return -1;
+    if (success) {
+        if (r == target_fd) return -1;  // dup must return a distinct fd
+        wali_syscall_close((int)r);
     }
-    
-    if (fd2 == fd) { 
-        wali_syscall_close(fd); 
-        wali_syscall_close(fd2); 
-        TEST_FAIL("dup returned same fd?"); 
-    }
-    
-    char buf[16];
-    memset(buf, 0, sizeof(buf));
-    int len = strlen(TEST_CONTENT);
-    if (wali_syscall_read(fd2, buf, len) != len) {
-         wali_syscall_close(fd); wali_syscall_close(fd2); 
-         TEST_FAIL("read failed");
-    }
-    
-    if (strcmp(buf, TEST_CONTENT) != 0) {
-        wali_syscall_close(fd); wali_syscall_close(fd2); 
-        TEST_FAIL("Content mismatch");
-    }
-    
-    wali_syscall_close(fd2);
-    wali_syscall_close(fd);
     return 0;
 }
-

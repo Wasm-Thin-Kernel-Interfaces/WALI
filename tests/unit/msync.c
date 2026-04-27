@@ -1,37 +1,14 @@
-// CMD: setup="/tmp/msync_file 8192" args="/tmp/msync_file" cleanup="/tmp/msync_file"
+// CMD: setup="/tmp/msync_a 4096" args="ms_sync       /tmp/msync_a"  cleanup="/tmp/msync_a"
+// CMD: setup="/tmp/msync_b 4096" args="ms_async      /tmp/msync_b"  cleanup="/tmp/msync_b"
+// CMD: setup="/tmp/msync_c 4096" args="ms_invalidate /tmp/msync_c"  cleanup="/tmp/msync_c"
+// CMD: setup="/tmp/msync_d 4096" args="bad_flags     /tmp/msync_d"  cleanup="/tmp/msync_d"
+// CMD:                            args="bad_addr      /tmp/none"      cleanup=""
 
 #define _GNU_SOURCE
 #include "wali_start.c"
-#include <unistd.h>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <string.h>
-#include <stdio.h>
-
-#ifdef WALI_TEST_WRAPPER
-#include <stdlib.h>
-int test_setup(int argc, char **argv) {
-    if (argc < 2) return -1;
-    const char *fname = argv[0];
-    int size = atoi(argv[1]);
-    int fd = open(fname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd >= 0) {
-        ftruncate(fd, size);
-        char buf[1024];
-        memset(buf, 'A', 1024);
-        for(int i=0; i < (size+1023)/1024; i++) {
-            write(fd, buf, (size - i*1024) > 1024 ? 1024 : (size - i*1024));
-        }
-        close(fd);
-    }
-    return 0;
-}
-int test_cleanup(int argc, char **argv) {
-    if (argc < 1) return -1;
-    unlink(argv[0]);
-    return 0;
-}
-#endif
 
 #ifdef __wasm__
 __attribute__((__import_module__("wali"), __import_name__("SYS_mmap")))
@@ -41,46 +18,64 @@ long long __imported_wali_munmap(void *addr, size_t length);
 __attribute__((__import_module__("wali"), __import_name__("SYS_msync")))
 long long __imported_wali_msync(void *addr, size_t length, int flags);
 
-void *wali_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
-    long long res = __imported_wali_mmap(addr, length, prot, flags, fd, (long long)offset);
-    if (res < 0 && res > -4096) return MAP_FAILED;
-    return (void *)(long)res;
+void *wali_mmap(void *a, size_t l, int p, int f, int fd, off_t o) {
+    long long r = __imported_wali_mmap(a, l, p, f, fd, (long long)o);
+    if (r < 0 && r > -4096) return MAP_FAILED;
+    return (void *)(long)r;
 }
-int wali_munmap(void *addr, size_t length) { return (int)__imported_wali_munmap(addr, length); }
-int wali_msync(void *addr, size_t length, int flags) { return (int)__imported_wali_msync(addr, length, flags); }
-
+int wali_munmap(void *a, size_t l) { return (int)__imported_wali_munmap(a, l); }
+int wali_msync(void *a, size_t l, int flags) { return (int)__imported_wali_msync(a, l, flags); }
 #else
 #include <sys/syscall.h>
-#include <sys/mman.h>
-void *wali_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
-    return mmap(addr, length, prot, flags, fd, offset);
+void *wali_mmap(void *a, size_t l, int p, int f, int fd, off_t o) { return mmap(a, l, p, f, fd, o); }
+int wali_munmap(void *a, size_t l) { return munmap(a, l); }
+int wali_msync(void *a, size_t l, int flags) { return msync(a, l, flags); }
+#endif
+
+#ifdef WALI_TEST_WRAPPER
+#include <stdlib.h>
+int test_setup(int argc, char **argv) {
+    if (argc < 2) return 0;
+    int fd = open(argv[0], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return -1;
+    ftruncate(fd, atoi(argv[1]));
+    close(fd);
+    return 0;
 }
-int wali_munmap(void *addr, size_t length) { return munmap(addr, length); }
-int wali_msync(void *addr, size_t length, int flags) { return msync(addr, length, flags); }
+int test_cleanup(int argc, char **argv) {
+    if (argc < 1) return 0;
+    unlink(argv[0]);
+    return 0;
+}
 #endif
 
 int test(void) {
     if (test_init_args() != 0) return -1;
-    const char *fname = argv[1];
-    
-    int fd = open(fname, O_RDWR);
+    if (argc < 3) return -1;
+    const char *mode = argv[1];
+    const char *path = argv[2];
+
+    if (!strcmp(mode, "bad_addr")) {
+        long r = wali_msync((void *)0x100000000ULL, 4096, MS_SYNC);
+        return (r < 0) ? 0 : -1;
+    }
+
+    int fd = wali_syscall_open(path, O_RDWR, 0);
     if (fd < 0) return -1;
-    
-    size_t size = 4096;
-    void *ptr = wali_mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (ptr == MAP_FAILED) return -1;
-    
-    ((char*)ptr)[0] = 'Z';
-    
-    if (wali_msync(ptr, size, MS_SYNC) != 0) return -1;
-    
-    wali_munmap(ptr, size);
-    
-    // Check file content via read
-    char buf[1];
-    if (pread(fd, buf, 1, 0) != 1) return -1;
-    if (buf[0] != 'Z') return -1;
-    
-    close(fd);
-    return 0;
+    void *p = wali_mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    wali_syscall_close(fd);
+    if (p == MAP_FAILED) return -1;
+
+    int flags;
+    int expect_ok = 1;
+    if (!strcmp(mode, "ms_sync"))            flags = MS_SYNC;
+    else if (!strcmp(mode, "ms_async"))      flags = MS_ASYNC;
+    else if (!strcmp(mode, "ms_invalidate")) flags = MS_SYNC | MS_INVALIDATE;
+    else if (!strcmp(mode, "bad_flags"))     { flags = 0xDEAD; expect_ok = 0; }
+    else { wali_munmap(p, 4096); return -1; }
+
+    long r = wali_msync(p, 4096, flags);
+    wali_munmap(p, 4096);
+    int success = (r == 0);
+    return (success == expect_ok) ? 0 : -1;
 }

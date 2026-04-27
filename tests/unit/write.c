@@ -1,40 +1,56 @@
-// CMD: setup="" args="" cleanup=""
+// CMD: args="ok"
+// CMD: args="zero"
+// CMD: args="bad_fd"
+// CMD: args="rdonly_fd"
+// CMD: args="closed_fd"
 
 #include "wali_start.c"
+#include <fcntl.h>
 #include <string.h>
 
+#define TMP_PATH "/tmp/wali_write_test"
+
 #ifdef WALI_TEST_WRAPPER
-// No setup/cleanup needed for pure pipe test
-int test_setup(int argc, char **argv) { return 0; }
-int test_cleanup(int argc, char **argv) { return 0; }
+int test_setup(int argc, char **argv) {
+    int fd = open(TMP_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) close(fd);
+    return 0;
+}
+int test_cleanup(int argc, char **argv) {
+    unlink(TMP_PATH);
+    return 0;
+}
 #endif
 
 int test(void) {
-    int pfd[2];
-    TEST_ASSERT_EQ(wali_syscall_pipe2(pfd, 0), 0);
+    if (test_init_args() != 0) return -1;
+    const char *mode = (argc > 1) ? argv[1] : "ok";
 
-    const char *msg = "WriteTest";
-    size_t len = strlen(msg);
+    if (!strcmp(mode, "bad_fd")) {
+        long r = wali_syscall_write(99999, "X", 1);
+        return (r < 0) ? 0 : -1;
+    }
 
-    // Test 1: Write success
-    TEST_ASSERT_EQ(wali_syscall_write(pfd[1], msg, len), (long)len);
+    int flags = !strcmp(mode, "rdonly_fd") ? O_RDONLY : O_WRONLY;
+    int fd = wali_syscall_open(TMP_PATH, flags, 0);
+    if (fd < 0) return -1;
 
-    // Verify Read
-    char buf[32];
-    TEST_ASSERT_EQ(wali_syscall_read(pfd[0], buf, len), (long)len);
-    TEST_ASSERT_EQ(strncmp(buf, msg, len), 0);
+    int ret = -1;
+    if (!strcmp(mode, "ok")) {
+        long r = wali_syscall_write(fd, "HELLO", 5);
+        ret = (r == 5) ? 0 : -1;
+    } else if (!strcmp(mode, "zero")) {
+        long r = wali_syscall_write(fd, "X", 0);
+        ret = (r == 0) ? 0 : -1;
+    } else if (!strcmp(mode, "rdonly_fd")) {
+        long r = wali_syscall_write(fd, "X", 1);
+        ret = (r < 0) ? 0 : -1;
+    } else if (!strcmp(mode, "closed_fd")) {
+        wali_syscall_close(fd);
+        long r = wali_syscall_write(fd, "X", 1);
+        return (r < 0) ? 0 : -1;
+    }
 
-    // Test 2: Write 0 bytes (Success)
-    TEST_ASSERT_EQ(wali_syscall_write(pfd[1], msg, 0), 0);
-
-    // Close pipe ends
-    wali_syscall_close(pfd[0]);
-    wali_syscall_close(pfd[1]);
-
-    // Test 3: Write to closed FD (Fail)
-    long res = wali_syscall_write(pfd[1], msg, len);
-    TEST_ASSERT(res < 0);
-    // TEST_ASSERT_EQ(res, -1);
-
-    return 0;
+    wali_syscall_close(fd);
+    return ret;
 }

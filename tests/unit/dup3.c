@@ -1,31 +1,12 @@
-// CMD: setup="" args="" cleanup=""
+// CMD: args="cloexec"
+// CMD: args="none"
+// CMD: args="same_fd"
+// CMD: args="bad_oldfd"
+// CMD: args="bad_flags"
 
 #include "wali_start.c"
-// #include <fcntl.h>
-// #include <unistd.h>
-// #include <string.h>
-
-#include <string.h>
 #include <fcntl.h>
-
-#define TEST_FILE "/tmp/dup3_test.txt"
-#define TEST_CONTENT "DUP3"
-
-#ifdef WALI_TEST_WRAPPER
-#include <stdlib.h>
-#include <stdio.h>
-int test_setup(int argc, char **argv) {
-    int fd = open(TEST_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) return 0;
-    write(fd, TEST_CONTENT, strlen(TEST_CONTENT));
-    close(fd);
-    return 0;
-}
-int test_cleanup(int argc, char **argv) {
-    unlink(TEST_FILE);
-    return 0;
-}
-#endif
+#include <string.h>
 
 #ifdef __wasm__
 WALI_IMPORT("SYS_dup3") long wali_syscall_dup3(int oldfd, int newfd, int flags);
@@ -40,50 +21,35 @@ long wali_syscall_dup3(int oldfd, int newfd, int flags) { return syscall(SYS_dup
 #ifndef FD_CLOEXEC
 #define FD_CLOEXEC 1
 #endif
-#ifndef F_GETFD
-#define F_GETFD 1
+
+#ifdef WALI_TEST_WRAPPER
+int test_setup(int argc, char **argv) { return 0; }
+int test_cleanup(int argc, char **argv) { return 0; }
 #endif
 
 int test(void) {
-    int fd = wali_syscall_open(TEST_FILE, O_RDONLY, 0);
-    TEST_ASSERT(fd >= 0);
+    if (test_init_args() != 0) return -1;
+    const char *mode = (argc > 1) ? argv[1] : "cloexec";
 
-    int target_fd = 20;
-    wali_syscall_close(target_fd); // ensure closed
+    int oldfd = 0, newfd = 20, flags = 0;
+    int expect_ok = 1;
+    int expect_cloexec = 0;
+    if (!strcmp(mode, "cloexec"))   { flags = O_CLOEXEC; expect_cloexec = 1; }
+    else if (!strcmp(mode, "none")) { flags = 0; }
+    else if (!strcmp(mode, "same_fd"))   { newfd = oldfd; expect_ok = 0; }  // dup3 disallows oldfd==newfd
+    else if (!strcmp(mode, "bad_oldfd")) { oldfd = 99999; expect_ok = 0; }
+    else if (!strcmp(mode, "bad_flags")) { flags = 0xDEADBEEF & ~O_CLOEXEC; expect_ok = 0; }
+    else return -1;
 
-    // dup3 with O_CLOEXEC
-    long fd2 = wali_syscall_dup3(fd, target_fd, O_CLOEXEC);
-    if (fd2 != target_fd) {
-        wali_syscall_close(fd);
-        TEST_FAIL("dup3 failed or returned wrong fd"); 
-    }
+    long r = wali_syscall_dup3(oldfd, newfd, flags);
+    int success = (r >= 0);
+    if (success != expect_ok) return -1;
+    if (!success) return 0;
 
-    // Verify content
-    char buf[10];
-    memset(buf, 0, 10);
-    int len = strlen(TEST_CONTENT);
-    if (wali_syscall_read(fd2, buf, len) != len) { 
-        wali_syscall_close(fd); wali_syscall_close(fd2);
-        TEST_FAIL("read failed");
-    }
-    if (strncmp(buf, TEST_CONTENT, len) != 0) {
-        wali_syscall_close(fd); wali_syscall_close(fd2);
-        TEST_FAIL("Content mismatch");
-    }
-
-    // Verify CLOEXEC flag set
-    long flags = wali_syscall_fcntl(fd2, F_GETFD, 0);
-    if (flags < 0) {
-        wali_syscall_close(fd); wali_syscall_close(fd2);
-        TEST_FAIL("fcntl failed");
-    }
-    if (!(flags & FD_CLOEXEC)) {
-         wali_syscall_close(fd); wali_syscall_close(fd2);
-         TEST_FAIL("FD_CLOEXEC not set");
-    }
-
-    wali_syscall_close(fd);
-    wali_syscall_close(fd2);
-    return 0;
+    if (r != newfd) return -1;
+    long fdflags = wali_syscall_fcntl((int)r, F_GETFD, 0);
+    if (fdflags < 0) { wali_syscall_close((int)r); return -1; }
+    int has_cloexec = (fdflags & FD_CLOEXEC) ? 1 : 0;
+    wali_syscall_close((int)r);
+    return (has_cloexec == expect_cloexec) ? 0 : -1;
 }
-

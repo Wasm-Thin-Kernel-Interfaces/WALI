@@ -163,29 +163,41 @@ class LibcGenerator(StubGenerator):
 
 class WamrGenerator(StubGenerator):
     def _arg_ctype(self, arg: ScArg) -> str:
-        """Map a syscall arg to its wasm-side fixed-width C type (intN_t/uintN_t)."""
-        prim = self.TS.c_primitives['ptr'] if arg.is_ptr() or arg.is_fn_ptr() \
-               else self.TS.resolve_primitive(arg)
+        """Map a syscall arg to its wasm-side C type.
+        Memory pointers use WasmMemAddr; function pointers use WasmTableInternalIdx;
+        others use a fixed-width intN_t/uintN_t."""
+        if arg.is_fn_ptr():
+            return "WasmTableInternalIdx"
+        if arg.is_ptr():
+            return "WasmMemAddr"
+        prim = self.TS.resolve_primitive(arg)
         return f"{'int' if prim.signed else 'uint'}{prim.size * 8}_t"
+
+    def _aux_fn_name(self, aux: AuxSyscall) -> str:
+        """wali_<name> with any leading underscores stripped (e.g. __init -> wali_init)."""
+        return "wali_" + aux.name.lstrip('_')
+
+    def _aux_ret_type(self, aux: AuxSyscall) -> str:
+        return aux.result if aux.result else "void"
 
     def generate(self):
         def declr_stub(sc: Syscall):
-            arglist = ''.join([f", {self._arg_ctype(a)} a{i+1}" for i, a in enumerate(sc.args_reduce())])
+            arglist = ''.join([f", {self._arg_ctype(a)} {name}" for a, name in zip(sc.args_reduce(), sc.args_id)])
             return f"long wali_syscall_{sc.name} (wasm_exec_env_t exec_env{arglist});"
 
         def impl_stub(sc: Syscall):
             args_red = sc.args_reduce()
-            arglist_def = ''.join([f", {self._arg_ctype(a)} a{i+1}" for i, a in enumerate(args_red)])
+            arglist_def = ''.join([f", {self._arg_ctype(a)} {name}" for a, name in zip(args_red, sc.args_id)])
 
             # Construct return call args
             ret_args = []
-            for i, argty in enumerate(args_red):
+            for argty, name in zip(args_red, sc.args_id):
                 if argty.endswith('*'):
-                    ret_args.append(f", MADDR(a{i+1})")
+                    ret_args.append(f", MADDR({name})")
                 else:
-                    ret_args.append(f", a{i+1}")
+                    ret_args.append(f", {name}")
             ret_arglist = ''.join(ret_args)
-            
+
             return textwrap.dedent(f"""\
                 // {sc.nr} TODO
                 long wali_syscall_{sc.name} (wasm_exec_env_t exec_env{arglist_def}) {{
@@ -206,9 +218,53 @@ class WamrGenerator(StubGenerator):
                 gen_native_args(sc.args_reduce())
             )
 
-        self.gen_and_write(declr_stub, 'declr.out')
-        self.gen_and_write(impl_stub, 'impl.out')
-        self.gen_and_write(symbols_stub, 'symbols.out')
+        def _native_sig_char(arg: ScArg) -> str:
+            if arg.is_ptr() or arg.is_fn_ptr():
+                return 'i'
+            return 'I' if self.TS.resolve_primitive(arg).size == 8 else 'i'
+
+        def aux_declr_stub(aux: AuxSyscall):
+            arglist = ''.join([f", {self._arg_ctype(a)} {name}" for a, name in zip(aux.args, aux.args_id)])
+            return f"{self._aux_ret_type(aux)} {self._aux_fn_name(aux)} (wasm_exec_env_t exec_env{arglist});"
+
+        def aux_impl_stub(aux: AuxSyscall):
+            arglist_def = ''.join([f", {self._arg_ctype(a)} {name}" for a, name in zip(aux.args, aux.args_id)])
+            ret_ty = self._aux_ret_type(aux)
+            tag = aux.name.lstrip('_')
+
+            lines = [
+                f"// {aux.name} TODO",
+                f"{ret_ty} {self._aux_fn_name(aux)} (wasm_exec_env_t exec_env{arglist_def}) {{",
+                f"    PC({tag});",
+                f"    ERRSC({tag}, \"Not yet implemented\");",
+            ]
+            if ret_ty != "void":
+                lines.append("    return 0;")
+            lines.append("}\n")
+            return "\n".join(lines)
+
+        def aux_symbols_stub(aux: AuxSyscall):
+            params = ''.join(_native_sig_char(a) for a in aux.args)
+            ret = '' if aux.result is None else _native_sig_char(ScArg(aux.result))
+            sig = f"\"({params}){ret}\""
+            return "\tNSYMBOL ( {: >20}, {: >30}, {: >12} ),".format(
+                aux.name, self._aux_fn_name(aux), sig
+            )
+
+        aux_declrs = '\n'.join(aux_declr_stub(a) for a in self.aux_syscalls.values())
+        aux_impls = '\n'.join(aux_impl_stub(a) for a in self.aux_syscalls.values())
+        aux_symbols = '\n'.join(aux_symbols_stub(a) for a in self.aux_syscalls.values())
+
+        typedefs = "typedef uint32_t WasmMemAddr;\ntypedef uint32_t WasmTableInternalIdx;\n"
+        self.gen_and_write(declr_stub, 'declr.out',
+                           prelude=typedefs + "\n/* Syscalls */",
+                           postlude="\n/* Auxiliary calls */\n" + aux_declrs)
+        self.gen_and_write(impl_stub, 'impl.out',
+                           prelude="/* Syscalls */",
+                           postlude="/* Auxiliary calls */\n" + aux_impls)
+        self.gen_and_write(symbols_stub, 'symbols.out',
+                           prelude="\t/* Syscalls */",
+                           postlude="\n\t/* Auxiliary calls */\n" + aux_symbols)
 
 
 class WitGenerator(StubGenerator):

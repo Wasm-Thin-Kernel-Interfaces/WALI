@@ -1,15 +1,15 @@
 """
-types_abi.py - Source of truth for WALI ABI type definitions.
+abi.py - Source of truth for WALI ABI type definitions.
 
 Defines the exact byte-level layout of all types used in WALI syscall interfaces.
 All type sizes, alignments, and struct field offsets are either explicitly defined
 or computed from C alignment rules.
 
 Usage:
-    from types_abi import TypeSystem
+    from wali.spec import TypeRegistry
 
-    ts = TypeSystem.load()
-    size = TypeSystem.resolve_size("struct_stat")
+    size = TypeRegistry.resolve_size("struct stat")   # -> 144
+    prim = TypeRegistry.resolve_primitive("off_t")     # -> Primitive(8, True)
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ class ArrayType:
 
 
 @dataclass(frozen=True)
-class Field:
+class StructField:
     """A field in a struct definition."""
     name: str           # e.g., "st_dev", "pad0"
     type_name: str      # e.g., "dev_t", "uint32_t", "long[3]"
@@ -52,10 +52,10 @@ class Field:
 
 
 # =============================================================================
-# TypeSystem
+# TypeRegistry
 # =============================================================================
 
-class TypeSystem:
+class TypeRegistry:
     """WALI ABI type system. Single source of truth for all type data and resolution.
 
     This is a singleton — do not instantiate. Use class attributes and classmethods directly.
@@ -141,7 +141,7 @@ class TypeSystem:
     class StructDef:
         """A struct type with explicit fields and computed byte-level layout."""
         name: str
-        fields: list[Field]
+        fields: list[StructField]
         expected_size: int | None = None
         packed: bool = False   # __attribute__((packed)) — no field padding, alignment=1
 
@@ -153,13 +153,13 @@ class TypeSystem:
 
         def __post_init__(self):
             self.field_offsets, self.field_sizes, self.total_size, self.alignment = \
-                TypeSystem.compute_struct_layout(self.fields, packed=self.packed)
+                TypeRegistry.compute_struct_layout(self.fields, packed=self.packed)
             if self.expected_size is not None:
                 assert self.total_size == self.expected_size, \
                     f"{self.name}: computed size {self.total_size} != expected {self.expected_size}"
-            assert self.name not in TypeSystem.struct_defs, \
+            assert self.name not in TypeRegistry.struct_defs, \
                 f"Duplicate struct definition: '{self.name}'"
-            TypeSystem.struct_defs[self.name] = self
+            TypeRegistry.struct_defs[self.name] = self
 
     # --- Resolution (classmethods — usable before any instance exists) ---
 
@@ -223,11 +223,11 @@ class TypeSystem:
         raise RuntimeError(f"Cannot resolve alignment for type '{type_name}'")
 
     @classmethod
-    def compute_struct_layout(cls, fields: list[Field], packed: bool = False) -> tuple[list[int], list[int], int, int]:
+    def compute_struct_layout(cls, fields: list[StructField], packed: bool = False) -> tuple[list[int], list[int], int, int]:
         """Compute struct layout using C alignment rules.
 
         Returns (field_offsets, field_sizes, total_size, struct_alignment).
-        Fields with explicit offsets override the computed position.
+        StructFields with explicit offsets override the computed position.
         If packed=True, all fields are placed with alignment 1 (no padding).
         """
         offsets: list[int] = []
@@ -242,7 +242,7 @@ class TypeSystem:
 
             if f.offset is not None:
                 assert f.offset >= current_offset, \
-                    f"Field '{f.name}': explicit offset {f.offset} overlaps " \
+                    f"StructField '{f.name}': explicit offset {f.offset} overlaps " \
                     f"previous field end at {current_offset}"
                 current_offset = f.offset
             else:
@@ -318,207 +318,207 @@ class TypeSystem:
 
 # --- Leaf structs (no struct field dependencies) ---
 
-TypeSystem.StructDef("struct timespec", [
-    Field("tv_sec",  "time_t"),
-    Field("tv_nsec", "long"),
+TypeRegistry.StructDef("struct timespec", [
+    StructField("tv_sec",  "time_t"),
+    StructField("tv_nsec", "long"),
 ], expected_size=16)
 
-TypeSystem.StructDef("struct timeval", [
-    Field("tv_sec",  "time_t"),
-    Field("tv_usec", "suseconds_t"),
+TypeRegistry.StructDef("struct timeval", [
+    StructField("tv_sec",  "time_t"),
+    StructField("tv_usec", "suseconds_t"),
 ], expected_size=16)
 
-TypeSystem.StructDef("struct timezone", [
-    Field("tz_minuteswest", "int"),
-    Field("tz_dsttime",     "int"),
+TypeRegistry.StructDef("struct timezone", [
+    StructField("tz_minuteswest", "int"),
+    StructField("tz_dsttime",     "int"),
 ], expected_size=8)
 
-TypeSystem.StructDef("stack_t", [
-    Field("ss_sp",    "void*"),
-    Field("ss_flags", "int32_t"),
-    Field("ss_size",  "size_t"),
+TypeRegistry.StructDef("stack_t", [
+    StructField("ss_sp",    "void*"),
+    StructField("ss_flags", "int32_t"),
+    StructField("ss_size",  "size_t"),
 ])
 
-TypeSystem.StructDef("struct dirent", [
-    Field("d_ino",    "ino_t"),
-    Field("d_off",    "off_t"),
-    Field("d_reclen", "unsigned short"),
-    Field("d_type",   "uint8_t"),
-    Field("d_name",   "uint8_t[256]"),
+TypeRegistry.StructDef("struct dirent", [
+    StructField("d_ino",    "ino_t"),
+    StructField("d_off",    "off_t"),
+    StructField("d_reclen", "unsigned short"),
+    StructField("d_type",   "uint8_t"),
+    StructField("d_name",   "uint8_t[256]"),
 ])
 
-TypeSystem.StructDef("struct epoll_event", [
-    Field("events", "uint32_t"),
-    Field("data",   "epoll_data_t"),
+TypeRegistry.StructDef("struct epoll_event", [
+    StructField("events", "uint32_t"),
+    StructField("data",   "epoll_data_t"),
 ], packed=True, expected_size=12)
 
-TypeSystem.StructDef("struct iovec", [
-    Field("iov_base", "void*"),
-    Field("iov_len",  "size_t"),
+TypeRegistry.StructDef("struct iovec", [
+    StructField("iov_base", "void*"),
+    StructField("iov_len",  "size_t"),
 ])
 
-TypeSystem.StructDef("struct pollfd", [
-    Field("fd",      "int32_t"),
-    Field("events",  "short"),
-    Field("revents", "short"),
+TypeRegistry.StructDef("struct pollfd", [
+    StructField("fd",      "int32_t"),
+    StructField("events",  "short"),
+    StructField("revents", "short"),
 ])
 
-TypeSystem.StructDef("struct rlimit", [
-    Field("rlim_cur", "rlim_t"),
-    Field("rlim_max", "rlim_t"),
+TypeRegistry.StructDef("struct rlimit", [
+    StructField("rlim_cur", "rlim_t"),
+    StructField("rlim_max", "rlim_t"),
 ], expected_size=16)
 
-TypeSystem.StructDef("struct sigaction", [
-    Field("sa_handler",  "ptr_func"),
-    Field("sa_mask",     "sigset_t"),
-    Field("sa_flags",    "int32_t"),
-    Field("sa_restorer", "ptr_func"),
+TypeRegistry.StructDef("struct sigaction", [
+    StructField("sa_handler",  "ptr_func"),
+    StructField("sa_mask",     "sigset_t"),
+    StructField("sa_flags",    "int32_t"),
+    StructField("sa_restorer", "ptr_func"),
 ])
 
-TypeSystem.StructDef("struct sockaddr", [
-    Field("sa_family", "sa_family_t"),
-    Field("sa_data",   "uint8_t[14]"),
+TypeRegistry.StructDef("struct sockaddr", [
+    StructField("sa_family", "sa_family_t"),
+    StructField("sa_data",   "uint8_t[14]"),
 ])
 
-TypeSystem.StructDef("struct statfs", [
-    Field("f_type",    "unsigned long"),
-    Field("f_bsize",   "unsigned long"),
-    Field("f_blocks",  "fsblkcnt_t"),
-    Field("f_bfree",   "fsblkcnt_t"),
-    Field("f_bavail",  "fsblkcnt_t"),
-    Field("f_files",   "fsfilcnt_t"),
-    Field("f_ffree",   "fsfilcnt_t"),
-    Field("f_fsid",    "fsid_t"),
-    Field("f_namelen", "unsigned long"),
-    Field("f_frsize",  "unsigned long"),
-    Field("f_flags",   "unsigned long"),
-    Field("f_spare",   "unsigned long[4]"),
+TypeRegistry.StructDef("struct statfs", [
+    StructField("f_type",    "unsigned long"),
+    StructField("f_bsize",   "unsigned long"),
+    StructField("f_blocks",  "fsblkcnt_t"),
+    StructField("f_bfree",   "fsblkcnt_t"),
+    StructField("f_bavail",  "fsblkcnt_t"),
+    StructField("f_files",   "fsfilcnt_t"),
+    StructField("f_ffree",   "fsfilcnt_t"),
+    StructField("f_fsid",    "fsid_t"),
+    StructField("f_namelen", "unsigned long"),
+    StructField("f_frsize",  "unsigned long"),
+    StructField("f_flags",   "unsigned long"),
+    StructField("f_spare",   "unsigned long[4]"),
 ])
 
-TypeSystem.StructDef("stx_time", [
-    Field("tv_sec", "int64_t"),
-    Field("tv_nsec", "uint32_t"),
-    Field("pad",     "int32_t"),
+TypeRegistry.StructDef("stx_time", [
+    StructField("tv_sec", "int64_t"),
+    StructField("tv_nsec", "uint32_t"),
+    StructField("pad",     "int32_t"),
 ], expected_size=16)
 
-TypeSystem.StructDef("struct sysinfo", [
-    Field("uptime",    "unsigned long"),
-    Field("loads",     "unsigned long[3]"),
-    Field("totalram",  "unsigned long"),
-    Field("freeram",   "unsigned long"),
-    Field("sharedram", "unsigned long"),
-    Field("bufferram", "unsigned long"),
-    Field("totalswap", "unsigned long"),
-    Field("freeswap",  "unsigned long"),
-    Field("procs",     "unsigned short"),
-    Field("pad",       "unsigned short"),
-    Field("totalhigh", "unsigned long"),
-    Field("freehigh",  "unsigned long"),
-    Field("mem_unit",  "uint32_t"),
-    Field("reserved",  "uint8_t[256]"),
+TypeRegistry.StructDef("struct sysinfo", [
+    StructField("uptime",    "unsigned long"),
+    StructField("loads",     "unsigned long[3]"),
+    StructField("totalram",  "unsigned long"),
+    StructField("freeram",   "unsigned long"),
+    StructField("sharedram", "unsigned long"),
+    StructField("bufferram", "unsigned long"),
+    StructField("totalswap", "unsigned long"),
+    StructField("freeswap",  "unsigned long"),
+    StructField("procs",     "unsigned short"),
+    StructField("pad",       "unsigned short"),
+    StructField("totalhigh", "unsigned long"),
+    StructField("freehigh",  "unsigned long"),
+    StructField("mem_unit",  "uint32_t"),
+    StructField("reserved",  "uint8_t[256]"),
 ])
 
-TypeSystem.StructDef("struct utimbuf", [
-    Field("actime",  "time_t"),
-    Field("modtime", "time_t"),
+TypeRegistry.StructDef("struct utimbuf", [
+    StructField("actime",  "time_t"),
+    StructField("modtime", "time_t"),
 ], expected_size=16)
 
-TypeSystem.StructDef("struct utsname", [
-    Field("sysname",    "uts_str"),
-    Field("nodename",   "uts_str"),
-    Field("release",    "uts_str"),
-    Field("version",    "uts_str"),
-    Field("machine",    "uts_str"),
-    Field("domainname", "uts_str"),
+TypeRegistry.StructDef("struct utsname", [
+    StructField("sysname",    "uts_str"),
+    StructField("nodename",   "uts_str"),
+    StructField("release",    "uts_str"),
+    StructField("version",    "uts_str"),
+    StructField("machine",    "uts_str"),
+    StructField("domainname", "uts_str"),
 ])
 
-TypeSystem.StructDef("fd_set", [
-    Field("fds_bits", "uint8_t[128]"),
+TypeRegistry.StructDef("fd_set", [
+    StructField("fds_bits", "uint8_t[128]"),
 ])
 
-TypeSystem.StructDef("cpu_set_t", [
-    Field("bits", "uint8_t[128]"),
+TypeRegistry.StructDef("cpu_set_t", [
+    StructField("bits", "uint8_t[128]"),
 ])
 
 # --- Structs with struct field dependencies ---
 
-TypeSystem.StructDef("struct itimerval", [
-    Field("it_interval", "struct timeval"),
-    Field("it_value",    "struct timeval"),
+TypeRegistry.StructDef("struct itimerval", [
+    StructField("it_interval", "struct timeval"),
+    StructField("it_value",    "struct timeval"),
 ])
 
-TypeSystem.StructDef("struct msghdr", [
-    Field("msg_name",       "void*"),
-    Field("msg_namelen",    "socklen_t"),
-    Field("msg_iov",        "struct iovec*"),
-    Field("msg_iovlen",     "int32_t"),
-    Field("pad1",           "int32_t"),
-    Field("msg_control",    "void*"),
-    Field("msg_controllen", "socklen_t"),
-    Field("pad2",           "int32_t"),
-    Field("msg_flags",      "int32_t"),
+TypeRegistry.StructDef("struct msghdr", [
+    StructField("msg_name",       "void*"),
+    StructField("msg_namelen",    "socklen_t"),
+    StructField("msg_iov",        "struct iovec*"),
+    StructField("msg_iovlen",     "int32_t"),
+    StructField("pad1",           "int32_t"),
+    StructField("msg_control",    "void*"),
+    StructField("msg_controllen", "socklen_t"),
+    StructField("pad2",           "int32_t"),
+    StructField("msg_flags",      "int32_t"),
 ])
 
-TypeSystem.StructDef("struct rusage", [
-    Field("ru_utime",    "struct timeval"),
-    Field("ru_stime",    "struct timeval"),
-    Field("ru_maxrss",   "long"),
-    Field("ru_ixrss",    "long"),
-    Field("ru_idrss",    "long"),
-    Field("ru_isrss",    "long"),
-    Field("ru_minflt",   "long"),
-    Field("ru_majflt",   "long"),
-    Field("ru_nswap",    "long"),
-    Field("ru_inblock",  "long"),
-    Field("ru_oublock",  "long"),
-    Field("ru_msgsng",   "long"),
-    Field("ru_msgrcv",   "long"),
-    Field("ru_nsignals", "long"),
-    Field("ru_nvcsw",    "long"),
-    Field("ru_nivcsw",   "long"),
-    Field("reserved",    "long[16]"),
+TypeRegistry.StructDef("struct rusage", [
+    StructField("ru_utime",    "struct timeval"),
+    StructField("ru_stime",    "struct timeval"),
+    StructField("ru_maxrss",   "long"),
+    StructField("ru_ixrss",    "long"),
+    StructField("ru_idrss",    "long"),
+    StructField("ru_isrss",    "long"),
+    StructField("ru_minflt",   "long"),
+    StructField("ru_majflt",   "long"),
+    StructField("ru_nswap",    "long"),
+    StructField("ru_inblock",  "long"),
+    StructField("ru_oublock",  "long"),
+    StructField("ru_msgsng",   "long"),
+    StructField("ru_msgrcv",   "long"),
+    StructField("ru_nsignals", "long"),
+    StructField("ru_nvcsw",    "long"),
+    StructField("ru_nivcsw",   "long"),
+    StructField("reserved",    "long[16]"),
 ])
 
-TypeSystem.StructDef("struct stat", [
-    Field("st_dev",     "dev_t"),
-    Field("st_ino",     "ino_t"),
-    Field("st_nlink",   "nlink_t"),
-    Field("st_mode",    "mode_t"),
-    Field("st_uid",     "uid_t"),
-    Field("st_gid",     "gid_t"),
-    Field("pad0",       "uint32_t"),
-    Field("st_rdev",    "dev_t"),
-    Field("st_size",    "off_t"),
-    Field("st_blksize", "blksize_t"),
-    Field("st_blocks",  "blkcnt_t"),
-    Field("st_atim",    "struct timespec"),
-    Field("st_mtim",    "struct timespec"),
-    Field("st_ctim",    "struct timespec"),
-    Field("unused",     "long[3]"),
+TypeRegistry.StructDef("struct stat", [
+    StructField("st_dev",     "dev_t"),
+    StructField("st_ino",     "ino_t"),
+    StructField("st_nlink",   "nlink_t"),
+    StructField("st_mode",    "mode_t"),
+    StructField("st_uid",     "uid_t"),
+    StructField("st_gid",     "gid_t"),
+    StructField("pad0",       "uint32_t"),
+    StructField("st_rdev",    "dev_t"),
+    StructField("st_size",    "off_t"),
+    StructField("st_blksize", "blksize_t"),
+    StructField("st_blocks",  "blkcnt_t"),
+    StructField("st_atim",    "struct timespec"),
+    StructField("st_mtim",    "struct timespec"),
+    StructField("st_ctim",    "struct timespec"),
+    StructField("unused",     "long[3]"),
 ], expected_size=144)
 
-TypeSystem.StructDef("struct statx", [
-    Field("stx_mask",            "uint32_t"),
-    Field("stx_blksize",         "uint32_t"),
-    Field("stx_attributes",      "uint64_t"),
-    Field("stx_nlink",           "uint32_t"),
-    Field("stx_uid",             "uint32_t"),
-    Field("stx_gid",             "uint32_t"),
-    Field("stx_mode",            "uint16_t"),
-    Field("pad1",                "uint16_t"),
-    Field("stx_ino",             "uint64_t"),
-    Field("stx_size",            "uint64_t"),
-    Field("stx_blocks",          "uint64_t"),
-    Field("stx_attributes_mask", "uint64_t"),
-    Field("stx_atime",           "stx_time"),
-    Field("stx_btime",           "stx_time"),
-    Field("stx_ctime",           "stx_time"),
-    Field("stx_mtime",           "stx_time"),
-    Field("stx_rdev_major",      "uint32_t"),
-    Field("stx_rdev_minor",      "uint32_t"),
-    Field("stx_dev_major",       "uint32_t"),
-    Field("stx_dev_minor",       "uint32_t"),
-    Field("spare",               "uint64_t[14]"),
+TypeRegistry.StructDef("struct statx", [
+    StructField("stx_mask",            "uint32_t"),
+    StructField("stx_blksize",         "uint32_t"),
+    StructField("stx_attributes",      "uint64_t"),
+    StructField("stx_nlink",           "uint32_t"),
+    StructField("stx_uid",             "uint32_t"),
+    StructField("stx_gid",             "uint32_t"),
+    StructField("stx_mode",            "uint16_t"),
+    StructField("pad1",                "uint16_t"),
+    StructField("stx_ino",             "uint64_t"),
+    StructField("stx_size",            "uint64_t"),
+    StructField("stx_blocks",          "uint64_t"),
+    StructField("stx_attributes_mask", "uint64_t"),
+    StructField("stx_atime",           "stx_time"),
+    StructField("stx_btime",           "stx_time"),
+    StructField("stx_ctime",           "stx_time"),
+    StructField("stx_mtime",           "stx_time"),
+    StructField("stx_rdev_major",      "uint32_t"),
+    StructField("stx_rdev_minor",      "uint32_t"),
+    StructField("stx_dev_major",       "uint32_t"),
+    StructField("stx_dev_minor",       "uint32_t"),
+    StructField("spare",               "uint64_t[14]"),
 ])
 
 
@@ -527,12 +527,12 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
     try:
-        TypeSystem.validate()
+        TypeRegistry.validate()
     except RuntimeError:
         sys.exit(1)
 
-    TypeSystem.print_struct_layouts()
+    TypeRegistry.print_struct_layouts()
 
-    print(f"\nTypeSystem: {len(TypeSystem.c_primitives)} primitives, "
-          f"{len(TypeSystem.type_aliases)} aliases, {len(TypeSystem.array_types)} array types, "
-          f"{len(TypeSystem.struct_defs)} structs")
+    print(f"\nTypeRegistry: {len(TypeRegistry.c_primitives)} primitives, "
+          f"{len(TypeRegistry.type_aliases)} aliases, {len(TypeRegistry.array_types)} array types, "
+          f"{len(TypeRegistry.struct_defs)} structs")

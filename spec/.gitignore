@@ -7,3 +7,10 @@ sorted_syscall_conversion.csv
 autogen/
 site/
 __pycache__
+
+# Python packaging artifacts
+build/
+dist/
+*.egg-info/
+src/*.egg-info/
+.eggs/

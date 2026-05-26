@@ -6,9 +6,8 @@ from pathlib import Path
 from dataclasses import dataclass, fields
 from typing import List, Dict, Any, Callable, Set, Optional, Tuple, Type
 
-# Import definition objects
-from syscall_definitions import SYSCALLS, AUX_SYSCALLS, Syscall, AuxSyscall, Nrs, ScArg
-from types_abi import TypeSystem
+# Import definition objects from the `wali.spec` namespace (see spec/pyproject.toml)
+from wali.spec import SYSCALLS, AUX_SYSCALLS, Syscall, AuxSyscall, ArchNrs, SyscallArg, TypeRegistry
 
 @dataclass
 class GeneratorContext:
@@ -19,7 +18,7 @@ class GeneratorContext:
     @classmethod
     def create(cls) -> 'GeneratorContext':
         logging.info("Creating context...")
-        archs = [f.name for f in fields(Nrs)]
+        archs = [f.name for f in fields(ArchNrs)]
         return cls(archs, SYSCALLS, AUX_SYSCALLS)
 
 
@@ -28,7 +27,7 @@ class StubGenerator:
     # Shared paths for all generators
     SCRIPT_DIR = Path(__file__).parent
     TEMPLATES_DIR = SCRIPT_DIR / 'templates'
-    TS = TypeSystem
+    TS = TypeRegistry
 
     def __init__(self, spath: Path, context: GeneratorContext):
         self.spath = spath
@@ -75,9 +74,9 @@ class LibcGenerator(StubGenerator):
         self._gen_c_stubs()
         self._gen_rust_stubs()
 
-    def _ptr_anonymize(self, args: List[ScArg]) -> List[str]:
+    def _ptr_anonymize(self, args: List[SyscallArg]) -> List[str]:
         """Anonymize pointer argument types to void* for non-basic pointer types."""
-        def f(arg: ScArg):
+        def f(arg: SyscallArg):
             (indir, base) = arg.ptr_split(max=1)
             return 'void*' if indir > 0 and not self.TS.is_primitive(base) else arg
         
@@ -86,7 +85,7 @@ class LibcGenerator(StubGenerator):
     def rustify_args(self, sc: Syscall) -> List[str]:
         """Convert argument types to Rust compatible types"""
         ptr_wit = self.TS.c_primitives['ptr'].wit_name
-        def f(arg: ScArg):
+        def f(arg: SyscallArg):
             prim = ptr_wit if arg.is_ptr() or arg.is_fn_ptr() else self.TS.resolve_primitive(arg).wit_name
             return prim if not prim.startswith('s') else 'i' + prim[1:]
 
@@ -162,7 +161,7 @@ class LibcGenerator(StubGenerator):
 
 
 class WamrGenerator(StubGenerator):
-    def _arg_ctype(self, arg: ScArg) -> str:
+    def _arg_ctype(self, arg: SyscallArg) -> str:
         """Map a syscall arg to its wasm-side C type.
         Memory pointers use WasmMemAddr; function pointers use WasmTableInternalIdx;
         others use a fixed-width intN_t/uintN_t."""
@@ -218,7 +217,7 @@ class WamrGenerator(StubGenerator):
                 gen_native_args(sc.args_reduce())
             )
 
-        def _native_sig_char(arg: ScArg) -> str:
+        def _native_sig_char(arg: SyscallArg) -> str:
             if arg.is_ptr() or arg.is_fn_ptr():
                 return 'i'
             return 'I' if self.TS.resolve_primitive(arg).size == 8 else 'i'
@@ -245,7 +244,7 @@ class WamrGenerator(StubGenerator):
 
         def aux_symbols_stub(aux: AuxSyscall):
             params = ''.join(_native_sig_char(a) for a in aux.args)
-            ret = '' if aux.result is None else _native_sig_char(ScArg(aux.result))
+            ret = '' if aux.result is None else _native_sig_char(SyscallArg(aux.result))
             sig = f"\"({params}){ret}\""
             return "\tNSYMBOL ( {: >20}, {: >30}, {: >12} ),".format(
                 aux.name, self._aux_fn_name(aux), sig
@@ -289,7 +288,7 @@ class WitGenerator(StubGenerator):
         return name.endswith('_t') and len(name) > 1 and name[0] in 'iu'
 
     def _field_type_to_wit(self, type_name: str) -> str:
-        """Convert a types_abi field type name to its WIT representation."""
+        """Convert an ABI field type name to its WIT representation."""
         TS = self.TS
         # Pointer types: "struct iovec*" -> "ptr-struct-iovec", "void*" -> "ptr-void"
         if type_name.endswith('*'):
@@ -342,7 +341,7 @@ class WitGenerator(StubGenerator):
                 if f.type_name.endswith('*'):
                     uniq_ptr_types.add(self._field_type_to_wit(f.type_name))
 
-        def transform_ptr_arg(arg: ScArg):
+        def transform_ptr_arg(arg: SyscallArg):
             if arg.is_fn_ptr():
                 return 'ptr-func'
             arg_no_ptr = arg.rstrip('*')
@@ -350,7 +349,7 @@ class WitGenerator(StubGenerator):
             return ("ptr-" * ptr_indirection) + arg_no_ptr
 
         for sc in self.syscalls.values():
-            args = [ScArg(x.strip().replace(' ', '-').replace('_', '-')) for x in sc.args]
+            args = [SyscallArg(x.strip().replace(' ', '-').replace('_', '-')) for x in sc.args]
             args = [transform_ptr_arg(x) for x in args]
 
             up_types = set([x for x in args if x.startswith('ptr-')])
@@ -367,7 +366,7 @@ class WitGenerator(StubGenerator):
 
         for sc in self.aux_syscalls.values():
             args = [x.strip().replace(' ', '-').replace('_', '-') for x in sc.args]
-            args = [transform_ptr_arg(ScArg(x)) for x in args]
+            args = [transform_ptr_arg(SyscallArg(x)) for x in args]
 
             up_types = set([x for x in args if x.startswith('ptr-')])
             aux_ptr_types.update(up_types)
@@ -601,7 +600,7 @@ class DocsGenerator(StubGenerator):
         """Generate Wasm32 import signature in WAT format."""
         # Map C types to Wasm types
         ptr_wit = self.TS.c_primitives['ptr'].wit_name
-        def to_wasm_type(ty: ScArg) -> str:
+        def to_wasm_type(ty: SyscallArg) -> str:
             prim = ptr_wit if (ty.is_ptr() or ty.is_fn_ptr()) else self.TS.resolve_primitive(ty).wit_name
             bitwidth = "32" if int(prim[1:]) < 32 else prim[1:]
             return f"i{bitwidth}"
@@ -759,9 +758,9 @@ class DocsGenerator(StubGenerator):
     @classmethod
     def _is_documented_type(cls, type_name: str) -> bool:
         """Check if type_name is a struct, alias, or named array (i.e., has a dedicated page)."""
-        return (type_name in TypeSystem.struct_defs
-                or type_name in TypeSystem.type_aliases
-                or type_name in TypeSystem.array_types)
+        return (type_name in TypeRegistry.struct_defs
+                or type_name in TypeRegistry.type_aliases
+                or type_name in TypeRegistry.array_types)
 
     def _type_link(self, type_name: str, relative_link: str = 'types.md') -> str:
         """Return a markdown link to the given type's entry, or plain text if none exists.
@@ -806,7 +805,7 @@ class DocsGenerator(StubGenerator):
                 return f"{self._type_link(stripped)}{stars}"
             return f"`{type_name}`"
         # Handle inline arrays: "long[3]" stays literal
-        if TypeSystem.parse_inline_array(type_name):
+        if TypeRegistry.parse_inline_array(type_name):
             return f"`{type_name}`"
         return self._type_link(type_name)
 
@@ -818,7 +817,7 @@ class DocsGenerator(StubGenerator):
         # --- Structs ---
         lines.append("## Structs")
         lines.append("")
-        for sd in TypeSystem.struct_defs.values():
+        for sd in TypeRegistry.struct_defs.values():
             anchor = self._alias_anchor(sd.name)
             lines.append(f'<a id="{anchor}"></a>')
             lines.append(f"### {sd.name}")
@@ -845,10 +844,10 @@ class DocsGenerator(StubGenerator):
         lines.append("")
         lines.append("| Name | Target |")
         lines.append("|------|--------|")
-        for alias_name, target in TypeSystem.type_aliases.items():
+        for alias_name, target in TypeRegistry.type_aliases.items():
             anchor = self._alias_anchor(alias_name)
             lines.append(f'| <a id="{anchor}"></a>`{alias_name}` | `{target}` |')
-        for arr_name, at in TypeSystem.array_types.items():
+        for arr_name, at in TypeRegistry.array_types.items():
             anchor = self._alias_anchor(arr_name)
             lines.append(f'| <a id="{anchor}"></a>`{arr_name}` | `{at.element_type}[{at.count}]` |')
         lines.append("")
@@ -858,7 +857,7 @@ class DocsGenerator(StubGenerator):
         lines.append("")
         lines.append("| Name | Size | Alignment |")
         lines.append("|------|------|-----------|")
-        for c_name, prim in TypeSystem.c_primitives.items():
+        for c_name, prim in TypeRegistry.c_primitives.items():
             anchor = self._alias_anchor(c_name)
             lines.append(f'| <a id="{anchor}"></a>`{c_name}` | {prim.size} | {prim.size} |')
         lines.append("")

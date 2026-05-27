@@ -12,6 +12,6 @@ The specification — syscall definitions and the ABI type system — lives in t
 
 from . import spec
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 
 __all__ = ["spec", "__version__"]

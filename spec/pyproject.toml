@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "wali"
-version = "0.1.0"
+name = "wali-linux"
+version = "0.1.1"
 description = "Syscall definitions and ABI for the WebAssembly Linux Interface (WALI)"
 readme = "PYPI.md"
 requires-python = ">=3.7"
@@ -24,9 +24,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Wasm-Thin-Kernel-Interfaces/WALI"
+Homepage = "https://wasm-thin-kernel-interfaces.github.io/WALI/"
 Repository = "https://github.com/Wasm-Thin-Kernel-Interfaces/WALI"
-Documentation = "https://aspect-labs.github.io/wali"
 
 [tool.setuptools.packages.find]
 include = ["wali", "wali.*"]

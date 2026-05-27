@@ -1,4 +1,4 @@
-# wali
+# WebAssembly Linux Interface
 
 Syscall definitions and ABI type system for the **WebAssembly Linux Interface
 (WALI)**.
@@ -13,7 +13,7 @@ spec-related tooling: code generators, bindings, validators, documentation, etc.
 ## Install
 
 ```sh
-pip install wali
+pip install wali-linux
 ```
 
 ## Usage
@@ -40,12 +40,11 @@ for f, off, sz in zip(stat.fields, stat.field_offsets, stat.field_sizes):
 
 ### Public API
 
-Everything is importable from the `wali.spec` namespace.
+Specification-related information is available in the `wali.spec` namespace
 
 | Name | Description |
 |------|-------------|
 | `SYSCALLS` | `dict[str, Syscall]` of all defined Linux syscalls |
 | `AUX_SYSCALLS` | `dict[str, AuxSyscall]` of WALI auxiliary calls |
-| `Syscall`, `AuxSyscall`, `ArchNrs`, `SyscallArg` | syscall dataclasses |
 | `TypeRegistry` | ABI type system: primitives, aliases, arrays, structs, and layout resolution |
 | `Primitive`, `ArrayType`, `StructField` | type-system dataclasses |

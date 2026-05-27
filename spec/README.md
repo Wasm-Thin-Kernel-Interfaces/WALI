@@ -1,8 +1,9 @@
-# WALI Spec Tooling
+# WALI Specification
 
-This directory holds the WALI specification as an installable Python package
-(`wali`, in [`wali/`](wali/)) plus the tooling for auto-generating bindings. For package
-usage and the public API, see [PYPI.md](PYPI.md) (the published description).
+This directory holds the source-of-truth of the WALI specification, and 
+scaffolding tooling for auto-generating bindings.
+See [wali-linux](https://pypi.org/project/wali-linux/) on PyPI for package
+usage and public API.
 
 ## Auto-Generated Bindings 
 

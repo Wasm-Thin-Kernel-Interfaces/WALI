@@ -22,7 +22,7 @@ jobs:
         run: sudo ./install-deps.sh
 
       - name: Run quick setup (toolchains, runtime, compiler, libc)
-        run: ./quick_setup.sh
+        run: ./quick_setup.sh --debug
 
       - name: Build tests
         run: make -C tests

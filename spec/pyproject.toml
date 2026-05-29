@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wali-linux"
-version = "0.1.2"
+version = "0.2.0"
 description = "Syscall definitions and ABI for the WebAssembly Linux Interface (WALI)"
 readme = "PYPI.md"
 requires-python = ">=3.7"

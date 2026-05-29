@@ -368,12 +368,12 @@ TypeRegistry.StructDef("struct rlimit", [
     StructField("rlim_max", "rlim_t"),
 ], expected_size=16)
 
-TypeRegistry.StructDef("struct sigaction", [
-    StructField("sa_handler",  "ptr_func"),
-    StructField("sa_mask",     "sigset_t"),
-    StructField("sa_flags",    "int32_t"),
-    StructField("sa_restorer", "ptr_func"),
-])
+TypeRegistry.StructDef("struct k_sigaction", [
+    StructField("handler",  "ptr_func"),
+    StructField("flags",    "unsigned long"),
+    StructField("restorer", "ptr_func"),
+    StructField("mask",     "unsigned[2]"),
+], packed=True, expected_size=24)
 
 TypeRegistry.StructDef("struct sockaddr", [
     StructField("sa_family", "sa_family_t"),

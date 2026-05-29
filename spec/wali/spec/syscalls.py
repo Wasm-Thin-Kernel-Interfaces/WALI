@@ -97,7 +97,7 @@ _syscall_list: List[Syscall] = [
     impl("mprotect", ["void* addr", "size_t len", "int prot"], ArchNrs(x86_64=10, arm64=226, rv64=226)),
     impl("munmap", ["void* addr", "size_t len"], ArchNrs(x86_64=11, arm64=215, rv64=215)),
     impl("brk", ["void* addr"], ArchNrs(x86_64=12, arm64=214, rv64=214)),
-    impl("rt_sigaction", ["int signum", "struct sigaction* act", "struct sigaction* oldact", "size_t sigsetsize"], ArchNrs(x86_64=13, arm64=134, rv64=134)),
+    impl("rt_sigaction", ["int signum", "struct k_sigaction* act", "struct k_sigaction* oldact", "size_t sigsetsize"], ArchNrs(x86_64=13, arm64=134, rv64=134)),
     impl("rt_sigprocmask", ["int how", "sigset_t* set", "sigset_t* oldset", "size_t sigsetsize"], ArchNrs(x86_64=14, arm64=135, rv64=135)),
     impl("rt_sigreturn", ["long unused"], ArchNrs(x86_64=15, arm64=139, rv64=139)),
     impl("ioctl", ["int fd", "int request", "char* argp"], ArchNrs(x86_64=16, arm64=29, rv64=29)),

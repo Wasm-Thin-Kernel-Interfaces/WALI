@@ -11,7 +11,8 @@
 
 ```shell
 sudo ./install-deps.sh
-# Full setup: toolchain configs + runtime + compiler + libc. Use the `-r` option for only runtime build
+# Full setup: toolchain configs + runtime + compiler + libc. 
+# Use the `-r` option for only runtime build.
 ./quick_setup.sh
 
 # Running programs 
@@ -28,7 +29,8 @@ For more granular control, see the [detailed setup guide](#detailed-setup-guide)
 
 ```shell
 cd examples
-# This script sets up standard build flags for the compiler toolchain. For WALI binaries without main/start functions, refer to `print_nostart.c` instead
+# This script sets up standard build flags for the compiler toolchain. 
+# For WALI binaries without main/start functions, refer to `print_nostart.c` instead
 ./compile-wali-standalone.sh -o print.wasm print.c
 # Run the binary (or `./print.wasm` if miscellaneous binary format is setup)
 ../iwasm print.wasm
@@ -44,10 +46,9 @@ First, setup toolchain configs:
 python3 toolchains/gen_toolchains.py
 ```
 
-From here, parts of this project may be incrementally built based on needs:
-
-* ***I want to run WALI Wasm executables!***: [WALI Engine](#wali-engine)
-* ***I want to compile/build WALI executables!***: [Compile Toolchain](#compiler-toolchain)
+The toolchain consists of two major parts:
+* ***I want to run WALI programs!***: [WALI Engine](#wali-engine)
+* ***I want to compile/build WALI programs!***: [Compile Toolchain](#compiler-toolchain)
 
 
 ## WALI Engine
@@ -65,9 +66,8 @@ make iwasm
 ```
 
 ### [Recommended] Miscellaneous Binary Format
-By registering Wasm/AoT binaries as a miscellenous binary format with the above engine, `.wasm` files can be executed like ELF files (e.g. `./bash.wasm --norc`).
+Execute  `.wasm` files can be executed like ELF files (e.g. `./bash.wasm --norc`)!
 This is **necessary** to build some applications that execute intermediate binaries.
-To do this, run:
 ```shell
 # Specify '-p' option to register with systemd-binfmt to survive system reboots.
 sudo ./toolchains/binfmt/binfmt_register.sh -p
@@ -75,8 +75,7 @@ sudo ./toolchains/binfmt/binfmt_register.sh -p
 ./examples/precompiled/lua/lua.wasm
 ```
 
-More info on miscellaneous binary formats and troubleshooting can be found [here](https://docs.kernel.org/admin-guide/binfmt-misc.html)
-
+More info on miscellaneous binfmts can be found [here](https://docs.kernel.org/admin-guide/binfmt-misc.html)
 
 
 ### Non-Linux Hosts (Docker Environment)
@@ -91,31 +90,23 @@ docker run --rm -it -w /dir -v (pwd):/dir wali <prog.wasm> <args..>
 
 ## Compile Toolchain
 
-First download the LLVM backend for WALI:
 ```shell
 make compiler SLIM=1  # SLIM only includes a minimal set of llvm bins.
-```
-
-Then, we can proceed to build the musl sysroot:
-```shell
+# Build musl-libc (sysroot)
 git submodule update --init wali-musl
 make libc
 ```
-
-> **Note**: Only the following 64-bit architectures are supported: `x86-64`, `aarch64`, `riscv64`. Future iterations will include a larger set of ISAs.
-
 
 #### [Optional] AoT Compiler
 Generate faster ahead-of time (AoT) compiled executables. For the WAMR 
 implementation, additional details can be found on the [WAMR compiler docs](https://github.com/SilverLineFramework/wasm-micro-runtime/tree/wali/wamr-compiler):
 ```shell
-# Build wamrc
+# Build and use wamrc
 make wamrc
-# Using wamrc
-wamrc --enable-multi-thread -o <destination-aot-file> <source-wasm-file>
+wamrc --enable-multi-thread -o lua.aot ./examples/precompiled/lua/lua.wasm
+# Run like a normal wasm file
+./iwasm lua.aot
 ```
- AoT files for WAMR can be run from the command line just like Wasm files.
-
 
 ## Test Suite
 
@@ -128,4 +119,7 @@ make -j && python3 run_tests.py
 
 ## Additional Resources
 * [Compiler ports](compiler_ports/README.md) of WALI for other languages.
-* [Zenodo](https://zenodo.org/records/14829424) Ubuntu 22.04 VM artifact for experimenting with WALI
+* [Zenodo](https://zenodo.org/records/14829424) Ubuntu 22.04 VM artifact from publication.
+
+## Notes
+* We currently support only x86\_64, aarch64, and riscv64. More ISAs will be added to this list as necessary.

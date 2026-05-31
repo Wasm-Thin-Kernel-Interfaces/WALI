@@ -4,7 +4,7 @@
 int main()
 {
     struct stat sb;
-    char path[] = "compile-wali.sh";
+    char path[] = "compile-wali-debug.sh";
 
     if (stat(path, &sb) == -1) {
         print("ERROR\n");

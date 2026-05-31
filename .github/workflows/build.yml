@@ -24,8 +24,10 @@ jobs:
       - name: Run quick setup (toolchains, runtime, compiler, libc)
         run: ./quick_setup.sh
 
-      - name: Build tests
-        run: make -C tests
+      - name: Build tests (native + fresh wasm)
+        run: |
+          make -C tests native
+          make -C tests rebuild-wasm
 
       - name: Upload iwasm
         uses: actions/upload-artifact@v4

@@ -1,0 +1,9 @@
+# Cross-compile to WALI by default and run the test binaries under iwasm.
+# Relative paths are resolved against this file's directory.
+# Override the runner with CARGO_TARGET_WASM32_WALI_LINUX_MUSL_RUNNER.
+
+[build]
+target = "wasm32-wali-linux-musl"
+
+[target.wasm32-wali-linux-musl]
+runner = ["../../../iwasm", "-v=0", "--stack-size=4194304"]

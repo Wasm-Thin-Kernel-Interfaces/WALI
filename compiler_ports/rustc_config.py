@@ -28,7 +28,7 @@ def update_bootstrap_config_toml(rust, muslroot, llvmbin, rtarget):
     wali_config = {
         rtarget: {
             'musl-root': absresolve(muslroot),
-            'llvm-libunwind': 'system',
+            'llvm-libunwind': 'no',
             'crt-static': True,
             'cc': absresolve(llvmbin / 'clang'),
             'cxx': absresolve(llvmbin / 'clang++'),
@@ -49,27 +49,6 @@ def update_bootstrap_config_toml(rust, muslroot, llvmbin, rtarget):
     with open(bootstrap_config, 'w') as f:
         toml.dump(config, f)
 
-# Update Cargo.toml for bootstrap compiler
-def update_bootstrap_cargo_toml(bootstrap, muslroot, llvmbin):
-    with open(bootstrap / 'Cargo.toml', 'r') as f:
-        cargo = toml.load(f)
-
-    cc_patch = {
-        "cc": {
-            "git": "https://github.com/arjunr2/rust-cc.git"
-        }
-    }
-    if 'patch' not in cargo:
-        cargo['patch'] = {}
-    if 'crates-io' not in cargo['patch']:
-        cargo['patch']['crates-io'] = {}
-    cargo['patch']['crates-io'].update(cc_patch)
-
-    logging.info(f"Writing {cargo} to {bootstrap}/Cargo.toml")
-
-    with open(bootstrap / 'Cargo.toml', 'w') as f:
-        toml.dump(cargo, f)
-
 def main():
     logging.basicConfig(level=logging.INFO, 
         format='%(levelname)s: %(message)s')
@@ -77,7 +56,6 @@ def main():
     args = parser.parse_args()
     rust, muslroot, llvmbin, rtarget = args.rustsrc, args.muslroot, args.llvmbin, args.target
     update_bootstrap_config_toml(rust, muslroot, llvmbin, rtarget)
-    update_bootstrap_cargo_toml(rust / 'src/bootstrap', muslroot, llvmbin)
 
 if __name__ == '__main__':
     main()

@@ -19,7 +19,3 @@ To compile applications:
 ```shell
 cargo +wali build --target=wasm32-wali-linux-musl
 ```
-
-> **Note**: Many applications will currently require a custom [libc](https://github.com/arjunr2/rust-libc.git) to
-be patched into `Cargo.toml` for the out-of-tree build.
-

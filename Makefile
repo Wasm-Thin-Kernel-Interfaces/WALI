@@ -233,11 +233,13 @@ rustc:
 	export WASM_MUSL_SYSROOT=$(WALI_SYSROOT_DIR)
 	cd compiler_ports/rust
 	rustup override set nightly
-	./x setup compiler
+	# `x setup` errors out if bootstrap.toml already exists; stdin is closed so
+	# its prompts (git hook, editor config) take their defaults non-interactively
+	[ -f bootstrap.toml ] || ./x setup compiler < /dev/null
 	python3 $(WALI_ROOT_DIR)/compiler_ports/rustc_config.py -r $(WALI_ROOT_DIR)/compiler_ports/rust \
 		-m $(WALI_SYSROOT_DIR) -l $(WALI_LLVM_BIN_DIR)
 	cargo update --manifest-path src/bootstrap/Cargo.toml -p cc
-	./x build
+	./x build --stage 1
 	rustup toolchain link wali build/host/stage1
 
 # --- TESTS --- #

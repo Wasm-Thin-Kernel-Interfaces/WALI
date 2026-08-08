@@ -1,0 +1,57 @@
+name: Rust Target
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'compiler_ports/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'compiler_ports/**'
+      - '.github/workflows/rust.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-target:
+    runs-on: ubuntu-latest
+    # Bootstrapping rustc dominates the runtime; the rest is minutes
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /usr/local/share/powershell "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - name: Install dependencies
+        run: |
+          sudo ./install-deps.sh
+          # Required by compiler_ports/rustc_config.py
+          sudo apt install -y python3-toml
+
+      - name: Run quick setup (toolchains, runtime, compiler, libc)
+        run: ./quick_setup.sh
+
+      # Full clone: bootstrap needs the git history to resolve a CI LLVM build,
+      # otherwise it falls back to compiling LLVM from source
+      - name: Checkout rust source
+        run: git submodule update --init compiler_ports/rust
+
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Build rustc with the wasm32-wali-linux-musl target
+        run: make rustc
+
+      - name: Run rust target tests
+        run: make -C compiler_ports/tests/rust test

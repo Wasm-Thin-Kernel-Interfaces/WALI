@@ -3,14 +3,8 @@ name: Rust Target
 on:
   push:
     branches: [main]
-    paths:
-      - 'compiler_ports/**'
-      - '.github/workflows/rust.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'compiler_ports/**'
-      - '.github/workflows/rust.yml'
   workflow_dispatch:
 
 concurrency:

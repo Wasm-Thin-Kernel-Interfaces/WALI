@@ -204,6 +204,11 @@ LLVM_SLIM_PATHS := \
 .ONESHELL:
 llvm-base: | build_dir
 	@if [ -x "$(WALI_LLVM_BIN_DIR)/clang" ]; then \
+		installed=$$($(WALI_LLVM_BIN_DIR)/llvm-config --version); \
+		if [ "$$installed" != "$(WALI_LLVM_VERSION)" ]; then \
+			echo "LLVM $$installed is installed at $(WALI_LLVM_DIR), but WALI needs $(WALI_LLVM_VERSION). Run 'make clean-llvm clean-libs' first." >&2; \
+			exit 1; \
+		fi; \
 		echo "LLVM already installed at $(WALI_LLVM_DIR)"; \
 	else \
 		mkdir -p $(WALI_LLVM_DIR) && \

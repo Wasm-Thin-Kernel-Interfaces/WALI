@@ -4,7 +4,7 @@
 triple = "wasm32-unknown-linux-muslwali"
 
 [llvm]
-version = "22.1.3"
+version = "23.1.4"
 
 [build_dirs]
 # "root" directory for builds is a must, and relative to WALI root; the root itself is computed per toolchain file

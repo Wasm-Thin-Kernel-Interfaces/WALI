@@ -20,8 +20,7 @@ concurrency:
 jobs:
   rust-target:
     runs-on: ubuntu-latest
-    # Bootstrapping rustc dominates the runtime; the rest is minutes
-    timeout-minutes: 240
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,23 +33,12 @@ jobs:
           df -h /
 
       - name: Install dependencies
-        run: |
-          sudo ./install-deps.sh
-          # Required by compiler_ports/rustc_config.py
-          sudo apt install -y python3-toml
+        run: sudo ./install-deps.sh
 
       - name: Run quick setup (toolchains, runtime, compiler, libc)
         run: ./quick_setup.sh
 
-      # Full clone: bootstrap needs the git history to resolve a CI LLVM build,
-      # otherwise it falls back to compiling LLVM from source
-      - name: Checkout rust source
-        run: git submodule update --init compiler_ports/rust
-
-      - name: Install nightly toolchain
-        run: rustup toolchain install nightly --profile minimal
-
-      - name: Build rustc with the wasm32-wali-linux-musl target
+      - name: Install nightly with rust-src
         run: make rustc
 
       - name: Run rust target tests

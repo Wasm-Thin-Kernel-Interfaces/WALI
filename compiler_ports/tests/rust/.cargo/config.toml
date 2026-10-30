@@ -5,5 +5,9 @@
 [build]
 target = "wasm32-wali-linux-musl"
 
+# Upstream nightly ships no prebuilt std for this target
+[unstable]
+build-std = ["std", "panic_abort"]
+
 [target.wasm32-wali-linux-musl]
 runner = ["../../../iwasm", "-v=0", "--stack-size=4194304"]

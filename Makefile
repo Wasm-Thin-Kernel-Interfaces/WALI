@@ -41,7 +41,7 @@ WALI_WAMR_BUILD_DIR := $(WALI_BUILD_DIR)/wamr
 WALI_IWASM_BUILD_DIR := $(WALI_WAMR_BUILD_DIR)/iwasm
 WALI_WAMRC_BUILD_DIR := $(WALI_WAMR_BUILD_DIR)/wamrc
 
-.PHONY: default libc libcxx iwasm compiler compiler-slim llvm-base llvm-slim llvm-source tests wamrc rustc
+.PHONY: default libc libcxx iwasm compiler compiler-slim llvm-base llvm-slim llvm-source tests wamrc rustc rustc-source
 .PHONY: clean-llvm-source clean clean-runtime clean-all clean-llvm 
 
 default: iwasm
@@ -228,15 +228,56 @@ compiler: llvm-base
 	
 
 # --- COMPILER PORTS --- #
+# Upstream nightly has the wasm32-wali-linux-musl target but ships no prebuilt
+# std for it; builds use `-Zbuild-std=std,panic_abort` with the rust-src component.
+# std links -lunwind on musl targets. libunwind has no wasm32 unwinder (the copy
+# bootstrap builds is empty too), so an empty archive in the sysroot satisfies it
+
+# Styles for RUSTC_NEXT_STEPS: instructions in bold white, snippets to copy in green.
+# Each line is styled on its own so line-buffered logs (e.g. CI) keep the colors
+BOLD := $(shell printf '\033[1;37m')
+GREEN := $(shell printf '\033[32m')
+RESET := $(shell printf '\033[0m')
+
+# Printed after `make rustc`; exported so the recipe can print it in one command
+define RUSTC_NEXT_STEPS
+
+$(BOLD)The nightly toolchain is installed with rust-src.$(RESET)
+
+$(BOLD)1. Add this to ~/.cargo/config.toml, or to a project's .cargo/config.toml$(RESET)
+
+$(GREEN)[target.wasm32-wali-linux-musl]$(RESET)
+$(GREEN)rustflags = ["-L", "native=$(abspath $(WALI_SYSROOT_DIR))/lib"]$(RESET)
+
+$(BOLD)2. Build with build-std and panic_abort:$(RESET)
+
+$(GREEN)   cargo +nightly build --target=wasm32-wali-linux-musl -Zbuild-std=std,panic_abort$(RESET)
+
+endef
+export RUSTC_NEXT_STEPS
+
 .ONESHELL:
 rustc:
+	rustup toolchain install nightly --profile minimal --component rust-src && \
+	$(WALI_LLVM_BIN_DIR)/llvm-ar rc $(WALI_SYSROOT_DIR)/lib/libunwind.a && \
+	printf '%s\n' "$$RUSTC_NEXT_STEPS"
+
+# Build rustc with the target from a rust checkout, linked as the `wali` toolchain:
+#   make rustc-source RUST_SRC=/path/to/rust
+RUST_SRC_DIR = $(abspath $(RUST_SRC))
+
+.ONESHELL:
+rustc-source:
+ifndef RUST_SRC
+	$(error RUST_SRC is not set. Usage: make rustc-source RUST_SRC=/path/to/rust)
+endif
 	export WASM_MUSL_SYSROOT=$(WALI_SYSROOT_DIR)
-	cd compiler_ports/rust
+	cd $(RUST_SRC_DIR) || exit 1
 	rustup override set nightly
 	# `x setup` errors out if bootstrap.toml already exists; stdin is closed so
 	# its prompts (git hook, editor config) take their defaults non-interactively
 	[ -f bootstrap.toml ] || ./x setup compiler < /dev/null
-	python3 $(WALI_ROOT_DIR)/compiler_ports/rustc_config.py -r $(WALI_ROOT_DIR)/compiler_ports/rust \
+	python3 $(WALI_ROOT_DIR)/compiler_ports/rustc_config.py -r $(RUST_SRC_DIR) \
 		-m $(WALI_SYSROOT_DIR) -l $(WALI_LLVM_BIN_DIR)
 	cargo update --manifest-path src/bootstrap/Cargo.toml -p cc
 	./x build --stage 1

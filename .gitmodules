@@ -45,10 +45,6 @@
 	path = applications/bash
 	url = https://github.com/arjunr2/bash.git
 	branch = wali
-[submodule "compiler_ports/rust"]
-	path = compiler_ports/rust
-	url = https://github.com/arjunr2/rust.git
-	branch = wali-stable
 [submodule "applications/libs/libX11"]
 	path = applications/libs/libX11
 	url = https://gitlab.freedesktop.org/xorg/lib/libx11.git
